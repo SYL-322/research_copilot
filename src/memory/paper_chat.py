@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
 
@@ -13,6 +14,7 @@ from db.database import initialize_database
 from db.repository import Repository
 from llm.openai_client import OpenAIClient
 from retrieval.paper_retriever import format_evidence_block, retrieve_relevant_chunks
+from utils.files import append_jsonl
 from utils.paths import project_root as default_project_root
 
 logger = logging.getLogger(__name__)
@@ -59,6 +61,66 @@ def _format_chat_history(
 
 def _memory_json_for_prompt(memory: PaperMemory) -> str:
     return json.dumps(memory.to_memory_json(), indent=2, ensure_ascii=False)
+
+
+def paper_qa_log_path(paper_id: int, *, project_root: Path, settings: Settings) -> Path:
+    """Filesystem path for optional persisted paper Q&A turns."""
+    data_dir = settings.resolve_data_dir(project_root)
+    return data_dir / "papers" / "qa" / f"paper_{paper_id}.jsonl"
+
+
+def save_paper_qa_turn(
+    paper_id: str,
+    question: str,
+    answer: str,
+    *,
+    settings: Settings | None = None,
+    project_root: Path | None = None,
+) -> Path:
+    """Append one paper-QA turn to local JSONL for later review."""
+    settings = settings or load_settings()
+    root = project_root or default_project_root()
+    pid = _parse_paper_id(paper_id)
+    path = paper_qa_log_path(pid, project_root=root, settings=settings)
+    append_jsonl(
+        path,
+        {
+            "paper_id": pid,
+            "timestamp": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+            "question": question.strip(),
+            "answer": answer.strip(),
+        },
+    )
+    return path
+
+
+def load_paper_qa_turns(
+    paper_id: str,
+    *,
+    settings: Settings | None = None,
+    project_root: Path | None = None,
+) -> list[dict[str, object]]:
+    """Load saved paper-QA turns from local JSONL, newest last."""
+    settings = settings or load_settings()
+    root = project_root or default_project_root()
+    pid = _parse_paper_id(paper_id)
+    path = paper_qa_log_path(pid, project_root=root, settings=settings)
+    if not path.is_file():
+        return []
+
+    rows: list[dict[str, object]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        raw = line.strip()
+        if not raw:
+            continue
+        try:
+            item = json.loads(raw)
+        except json.JSONDecodeError:
+            logger.warning("Skipping invalid paper QA log line in %s", path)
+            continue
+        if isinstance(item, dict):
+            rows.append(item)
+    return rows
 
 
 def answer_paper_question(

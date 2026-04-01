@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import io
 import json
 import sys
@@ -35,7 +36,22 @@ class TestCliParser(unittest.TestCase):
         args = p.parse_args(["ask", "3", "What", "is", "this?"])
         self.assertEqual(args.command, "ask")
         self.assertEqual(args.paper_id, "3")
+        self.assertFalse(args.save)
         self.assertEqual(args.question, ["What", "is", "this?"])
+
+    def test_ask_save_parse(self) -> None:
+        p = cli_mod.build_parser()
+        args = p.parse_args(["ask", "3", "--save", "What", "is", "this?"])
+        self.assertEqual(args.command, "ask")
+        self.assertEqual(args.paper_id, "3")
+        self.assertTrue(args.save)
+        self.assertEqual(args.question, ["What", "is", "this?"])
+
+    def test_ask_log_parse(self) -> None:
+        p = cli_mod.build_parser()
+        args = p.parse_args(["ask-log", "3"])
+        self.assertEqual(args.command, "ask-log")
+        self.assertEqual(args.paper_id, "3")
 
     def test_digest_parse(self) -> None:
         p = cli_mod.build_parser()
@@ -170,6 +186,61 @@ class TestCliCommands(unittest.TestCase):
             rc = cli_mod.cmd_search_papers(args)
         self.assertEqual(rc, 0)
         self.assertIn("Diffusion Models for Video Generation", out.getvalue())
+
+    def test_cmd_ask_save_persists_answer(self) -> None:
+        args = cli_mod.build_parser().parse_args(["ask", "3", "--save", "What", "is", "this?"])
+        out = io.StringIO()
+        err = io.StringIO()
+        save_path = ROOT / "data" / "papers" / "qa" / "paper_3.jsonl"
+        with (
+            patch("memory.paper_chat.answer_paper_question", return_value="Test answer.") as ask_mock,
+            patch("memory.paper_chat.save_paper_qa_turn", return_value=save_path) as save_mock,
+            patch("utils.paths.project_root", return_value=ROOT),
+            redirect_stdout(out),
+            contextlib.redirect_stderr(err),
+        ):
+            rc = cli_mod.cmd_ask(args)
+        self.assertEqual(rc, 0)
+        ask_mock.assert_called_once_with("3", "What is this?", project_root=ROOT)
+        save_mock.assert_called_once_with("3", "What is this?", "Test answer.", project_root=ROOT)
+        self.assertIn("Test answer.", out.getvalue())
+        self.assertIn("Saved:", err.getvalue())
+
+    def test_cmd_ask_log_prints_saved_turns(self) -> None:
+        args = cli_mod.build_parser().parse_args(["ask-log", "3"])
+        out = io.StringIO()
+        with (
+            patch(
+                "memory.paper_chat.load_paper_qa_turns",
+                return_value=[
+                    {
+                        "timestamp": "2026-04-01T12:00:00+00:00",
+                        "question": "What is this?",
+                        "answer": "A saved answer.",
+                    }
+                ],
+            ),
+            patch("utils.paths.project_root", return_value=ROOT),
+            redirect_stdout(out),
+        ):
+            rc = cli_mod.cmd_ask_log(args)
+        self.assertEqual(rc, 0)
+        text = out.getvalue()
+        self.assertIn("[1] 2026-04-01T12:00:00+00:00", text)
+        self.assertIn("Q: What is this?", text)
+        self.assertIn("A: A saved answer.", text)
+
+    def test_cmd_ask_log_empty_history(self) -> None:
+        args = cli_mod.build_parser().parse_args(["ask-log", "3"])
+        out = io.StringIO()
+        with (
+            patch("memory.paper_chat.load_paper_qa_turns", return_value=[]),
+            patch("utils.paths.project_root", return_value=ROOT),
+            redirect_stdout(out),
+        ):
+            rc = cli_mod.cmd_ask_log(args)
+        self.assertEqual(rc, 0)
+        self.assertIn("No saved ask history for paper_id=3.", out.getvalue())
 
 
 if __name__ == "__main__":

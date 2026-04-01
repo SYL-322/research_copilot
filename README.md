@@ -283,11 +283,19 @@ This runs the paper-memory prompt over the ingested paper text and stores the re
 ```bash
 python cli.py ask 1 "What is the main contribution?"
 python cli.py ask 1 "Why does the method work?"
+python cli.py ask 1 --save "What is the main contribution?"
+python cli.py ask-log 1
 ```
 
 This uses stored paper memory plus retrieved text chunks from the same paper.
 
 If you do not remember the numeric `paper_id`, use `python cli.py papers` or `python cli.py search-papers ...` first.
+
+`ask` does not persist answers by default. If you want a lightweight local record, use `--save` to append the turn to:
+
+`data/papers/qa/paper_<paper_id>.jsonl`
+
+Use `python cli.py ask-log <paper_id>` to print the saved local Q&A history for that paper.
 
 <a id="run-topic-scan"></a>
 ### 6. Run topic scan

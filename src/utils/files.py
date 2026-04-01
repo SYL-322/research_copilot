@@ -60,3 +60,12 @@ def read_markdown(path: Path, *, encoding: str = "utf-8") -> str:
 def write_markdown(path: Path, content: str, *, encoding: str = "utf-8") -> None:
     """Write Markdown content, creating parent directories as needed."""
     write_text(path, content, encoding=encoding)
+
+
+def append_jsonl(path: Path, data: Any, *, encoding: str = "utf-8") -> None:
+    """Append one JSON object as a single line, creating parent directories as needed."""
+    p = path.expanduser().resolve()
+    ensure_parent(p)
+    with p.open("a", encoding=encoding) as f:
+        f.write(json.dumps(data, ensure_ascii=False) + "\n")
+    logger.debug("Appended JSONL file: %s", p)

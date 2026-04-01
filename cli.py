@@ -119,7 +119,7 @@ def cmd_memory(args: argparse.Namespace) -> int:
 
 
 def cmd_ask(args: argparse.Namespace) -> int:
-    from memory.paper_chat import PaperQAError, answer_paper_question
+    from memory.paper_chat import PaperQAError, answer_paper_question, save_paper_qa_turn
     from utils.paths import project_root
 
     q = " ".join(args.question).strip()
@@ -127,8 +127,35 @@ def cmd_ask(args: argparse.Namespace) -> int:
         print("Error: question is empty.", file=sys.stderr)
         return 2
     try:
-        out = answer_paper_question(args.paper_id, q, project_root=project_root())
+        root = project_root()
+        out = answer_paper_question(args.paper_id, q, project_root=root)
         print(out)
+        if getattr(args, "save", False):
+            path = save_paper_qa_turn(args.paper_id, q, out, project_root=root)
+            print(f"Saved: {path}", file=sys.stderr)
+        return 0
+    except PaperQAError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_ask_log(args: argparse.Namespace) -> int:
+    from memory.paper_chat import PaperQAError, load_paper_qa_turns
+    from utils.paths import project_root
+
+    try:
+        turns = load_paper_qa_turns(args.paper_id, project_root=project_root())
+        if not turns:
+            print(f"No saved ask history for paper_id={args.paper_id}.")
+            return 0
+        for idx, item in enumerate(turns, 1):
+            ts = str(item.get("timestamp") or "")
+            question = str(item.get("question") or "").strip()
+            answer = str(item.get("answer") or "").strip()
+            print(f"[{idx}] {ts}")
+            print(f"Q: {question}")
+            print(f"A: {answer}")
+            print("")
         return 0
     except PaperQAError as e:
         print(f"Error: {e}", file=sys.stderr)
@@ -253,11 +280,20 @@ def build_parser() -> argparse.ArgumentParser:
     pa = sub.add_parser("ask", help="Ask a question (needs memory built first)")
     pa.add_argument("paper_id", help="papers.id")
     pa.add_argument(
+        "--save",
+        action="store_true",
+        help="Append the question/answer pair to data/papers/qa/paper_<id>.jsonl",
+    )
+    pa.add_argument(
         "question",
         nargs=argparse.REMAINDER,
         help="Question text (quote for multiple words)",
     )
     pa.set_defaults(func=cmd_ask)
+
+    pal = sub.add_parser("ask-log", help="Show saved ask history for one paper")
+    pal.add_argument("paper_id", help="papers.id")
+    pal.set_defaults(func=cmd_ask_log)
 
     pp = sub.add_parser("papers", help="List locally stored papers")
     pp.add_argument("--limit", type=int, default=50, help="Maximum rows to show")

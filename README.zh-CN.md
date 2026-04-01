@@ -283,11 +283,19 @@ python cli.py memory 1
 ```bash
 python cli.py ask 1 "What is the main contribution?"
 python cli.py ask 1 "Why does the method work?"
+python cli.py ask 1 --save "What is the main contribution?"
+python cli.py ask-log 1
 ```
 
 这里会使用已存储的 paper memory 和从同一篇论文中检索出的文本 chunks。
 
 如果你记不住数值型 `paper_id`，先运行 `python cli.py papers` 或 `python cli.py search-papers ...`。
+
+默认情况下，`ask` 不会持久化回答。如果你想保留一个轻量的本地记录，可以加上 `--save`，把该轮问答追加写入：
+
+`data/papers/qa/paper_<paper_id>.jsonl`
+
+可以使用 `python cli.py ask-log <paper_id>` 直接打印这篇论文已保存的本地问答历史。
 
 <a id="run-topic-scan"></a>
 ### 6. 运行 topic scan
