@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from typing import Iterable
@@ -11,6 +12,7 @@ from core.config import Settings
 from topic.literature_search import (
     CandidatePaper,
     dedupe_candidates,
+    expand_topic_queries,
     rank_and_filter_topic_candidates,
     search_arxiv,
     search_semantic_scholar,
@@ -61,6 +63,37 @@ def _sort_key_recent_relevant(p: CandidatePaper) -> tuple[date, float, str]:
     return (d, p.topic_relevance_score, p.title)
 
 
+def _search_digest_topic_variants(
+    topic: str,
+    *,
+    fetch_cap: int,
+    settings: Settings,
+) -> list[CandidatePaper]:
+    """Search digest topics across lightweight query variants, then dedupe.
+
+    This intentionally reuses the same topic-query expansion as topic scan, but
+    keeps the digest flow local: provider fetches still happen here, and the
+    downstream digest pipeline remains unchanged.
+    """
+    query_variants = expand_topic_queries(topic) or [topic]
+    timeout = settings.http_timeout
+    provider_cap = max(1, fetch_cap // 2)
+    per_query_limit = min(25, max(5, math.ceil(provider_cap / max(1, len(query_variants)))))
+
+    out: list[CandidatePaper] = []
+    for query in query_variants:
+        out.extend(search_arxiv(query, max_results=per_query_limit, timeout=timeout))
+        out.extend(
+            search_semantic_scholar(
+                query,
+                max_results=per_query_limit,
+                timeout=timeout,
+                api_key=settings.semantic_scholar_api_key,
+            )
+        )
+    return dedupe_candidates(out)
+
+
 def find_recent_for_topic(
     topic: str,
     *,
@@ -82,17 +115,11 @@ def find_recent_for_topic(
         return []
 
     cutoff = _utc_today() - timedelta(days=max(0, days_back))
-    timeout = settings.http_timeout
-
-    half = max(1, fetch_cap // 2)
-    arx = search_arxiv(t, max_results=half, timeout=timeout)
-    ss = search_semantic_scholar(
+    merged = _search_digest_topic_variants(
         t,
-        max_results=fetch_cap - half,
-        timeout=timeout,
-        api_key=settings.semantic_scholar_api_key,
+        fetch_cap=fetch_cap,
+        settings=settings,
     )
-    merged = dedupe_candidates(arx + ss)
     ranked = rank_and_filter_topic_candidates(
         t,
         merged,

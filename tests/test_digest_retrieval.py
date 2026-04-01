@@ -102,6 +102,41 @@ class TestDigestRetrieval(unittest.TestCase):
         self.assertEqual(out[0].title, "Animal Motion Synthesis with 3D Priors")
         self.assertGreater(out[0].topic_relevance_score, out[1].topic_relevance_score)
 
+    def test_slash_topic_expands_into_subqueries_for_digest_retrieval(self) -> None:
+        arxiv_queries: list[str] = []
+        ss_queries: list[str] = []
+
+        def fake_search_arxiv(query: str, *, max_results: int, timeout: float) -> list[CandidatePaper]:
+            arxiv_queries.append(query)
+            return []
+
+        def fake_search_ss(
+            query: str,
+            *,
+            max_results: int,
+            timeout: float,
+            api_key: str | None,
+        ) -> list[CandidatePaper]:
+            ss_queries.append(query)
+            return []
+
+        with (
+            patch("digest.recent_paper_finder.search_arxiv", side_effect=fake_search_arxiv),
+            patch("digest.recent_paper_finder.search_semantic_scholar", side_effect=fake_search_ss),
+        ):
+            out = find_recent_for_topic(
+                "rigging / articulation",
+                days_back=7,
+                max_per_topic=10,
+                settings=self.settings,
+                fetch_cap=12,
+            )
+        self.assertEqual(out, [])
+        self.assertIn("rigging / articulation", arxiv_queries)
+        self.assertIn("rigging", arxiv_queries)
+        self.assertIn("articulation", arxiv_queries)
+        self.assertEqual(arxiv_queries, ss_queries)
+
     def test_collect_recent_across_topics_keeps_provenance_not_relevance_label(self) -> None:
         paper = _paper(
             "Animal Reconstruction from Multi-view Images",

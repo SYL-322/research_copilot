@@ -4,6 +4,8 @@
 
 `research_copilot` 是一个本地优先的研究助手，主要用于在命令行中处理学术论文。
 
+它同时也是一个 vibe coding 项目：整体实现强调实用、可迭代、产品导向，而不是过度工程化。
+
 它围绕一个实用工作流构建：
 
 - 将论文导入本地存储
@@ -22,13 +24,13 @@
 - [工作原理](#how-it-works)
 - [环境准备](#setup)
 - [使用方式](#how-to-use)
-  - [Ingest 一篇论文](#ingest-a-paper)
-  - [列出已存储论文](#list-stored-papers)
-  - [搜索本地论文](#search-stored-papers)
-  - [构建 paper memory](#build-paper-memory)
-  - [围绕单篇论文提问](#ask-questions-about-a-paper)
-  - [运行 topic scan](#run-topic-scan)
-  - [生成 daily digest](#generate-a-daily-digest)
+  - [1. Ingest 一篇论文](#ingest-a-paper)
+  - [2. 列出已存储论文](#list-stored-papers)
+  - [3. 搜索本地论文](#search-stored-papers)
+  - [4. 构建 paper memory](#build-paper-memory)
+  - [5. 围绕单篇论文提问](#ask-questions-about-a-paper)
+  - [6. 运行 topic scan](#run-topic-scan)
+  - [7. 生成 daily digest](#generate-a-daily-digest)
 - [Topic Report 输出](#topic-report-output)
 - [设计理念](#design-philosophy)
 - [局限性](#limitations)
@@ -51,6 +53,8 @@
 - **摘要工作流**：近期论文检索 -> 元数据分诊 -> daily digest
 
 更准确地说，它是一个本地研究工作台，而不是一个“全自动研究代理”。
+
+它也刻意保持 vibe coding 的气质：优先小而清晰的本地工具、快速迭代、可检查的数据文件，以及直接可用的 CLI 工作流。
 
 <a id="key-components"></a>
 ## 核心组件
@@ -207,7 +211,7 @@ python cli.py --help
 ```
 
 <a id="ingest-a-paper"></a>
-### Ingest 一篇论文
+### 1. Ingest 一篇论文
 
 从 arXiv：
 
@@ -236,7 +240,7 @@ python cli.py ingest 1706.03762 --with-memory
 这会先执行 ingest，再自动构建结构化 paper memory。
 
 <a id="list-stored-papers"></a>
-### 列出已存储论文
+### 2. 列出已存储论文
 
 ```bash
 python cli.py papers
@@ -252,7 +256,7 @@ python cli.py papers --limit 100
 - title
 
 <a id="search-stored-papers"></a>
-### 搜索本地论文
+### 3. 搜索本地论文
 
 ```bash
 python cli.py search-papers attention
@@ -263,7 +267,7 @@ python cli.py search-papers 1706.03762
 这会按标题文本、关键词、作者文本、venue/source 文本以及 external id 搜索本地论文。
 
 <a id="build-paper-memory"></a>
-### 构建 paper memory
+### 4. 构建 paper memory
 
 ```bash
 python cli.py memory 1
@@ -274,7 +278,7 @@ python cli.py memory 1
 这一步会对 ingest 后的论文文本运行 paper-memory prompt，并将结果同时写入 SQLite 和 `data/cache/`。
 
 <a id="ask-questions-about-a-paper"></a>
-### 围绕单篇论文提问
+### 5. 围绕单篇论文提问
 
 ```bash
 python cli.py ask 1 "What is the main contribution?"
@@ -286,7 +290,7 @@ python cli.py ask 1 "Why does the method work?"
 如果你记不住数值型 `paper_id`，先运行 `python cli.py papers` 或 `python cli.py search-papers ...`。
 
 <a id="run-topic-scan"></a>
-### 运行 topic scan
+### 6. 运行 topic scan
 
 ```bash
 python cli.py topic "diffusion models for video" --max-papers 25
@@ -356,7 +360,7 @@ Topic scan 的缓存键由 topic slug 和 `--max-papers` 共同决定。JSON cac
 - Semantic Scholar 内部节流逻辑仍然保留；设置 `SEMANTIC_SCHOLAR_API_KEY` 可以提升配额并减少 degraded-mode 扫描。
 
 <a id="generate-a-daily-digest"></a>
-### 生成 daily digest
+### 7. 生成 daily digest
 
 `digest` 是“近期论文分诊”工作流。它会搜索某个时间窗口内发表的论文，按一个或多个 topic 组织，再让 LLM 输出简洁的推荐表，并把结果写入 `data/digests/`。
 
@@ -462,7 +466,9 @@ python cli.py digest --days 7 "animal dataset" "animal motion"
 
 Digest 内部会做的事情：
 
-- 为每个 topic 检索近期论文
+- 在合适的时候把 topic 扩展成轻量级 query variants，包括像 `rigging / articulation` 这样的斜杠输入
+- 为每个 topic 或展开后的子查询检索近期论文
+- 在最终按时间窗口保留前，先做一层轻量 lexical topic relevance 过滤
 - 对跨 topic 重叠结果做合并和去重
 - 把候选元数据送入 digest prompt
 - 在 `data/digests/` 下写出 Markdown digest

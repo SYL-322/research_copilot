@@ -4,6 +4,8 @@ English | [简体中文](./README.zh-CN.md)
 
 `research_copilot` is a local-first research assistant for working with academic papers from the command line.
 
+This is also a vibe coding project: the codebase is intentionally pragmatic, iterative, and product-shaped rather than over-engineered.
+
 It is built for a practical workflow:
 
 - ingest papers into a local store
@@ -22,13 +24,13 @@ The project is intentionally lightweight. It uses Python, SQLite, local files un
 - [How It Works](#how-it-works)
 - [Setup](#setup)
 - [How To Use](#how-to-use)
-  - [Ingest a paper](#ingest-a-paper)
-  - [List stored papers](#list-stored-papers)
-  - [Search stored papers](#search-stored-papers)
-  - [Build paper memory](#build-paper-memory)
-  - [Ask questions about a paper](#ask-questions-about-a-paper)
-  - [Run topic scan](#run-topic-scan)
-  - [Generate a daily digest](#generate-a-daily-digest)
+  - [1. Ingest a paper](#ingest-a-paper)
+  - [2. List stored papers](#list-stored-papers)
+  - [3. Search stored papers](#search-stored-papers)
+  - [4. Build paper memory](#build-paper-memory)
+  - [5. Ask questions about a paper](#ask-questions-about-a-paper)
+  - [6. Run topic scan](#run-topic-scan)
+  - [7. Generate a daily digest](#generate-a-daily-digest)
 - [Topic Report Output](#topic-report-output)
 - [Design Philosophy](#design-philosophy)
 - [Limitations](#limitations)
@@ -51,6 +53,8 @@ The project separates these concerns:
 - **Digest workflow**: recent-paper search over topics -> metadata triage -> daily digest.
 
 It is best thought of as a local research workbench, not as an autonomous research agent.
+
+It is also intentionally a vibe coding workbench: fast iteration, small local tools, inspectable files, and direct CLI workflows matter more than framework purity.
 
 <a id="key-components"></a>
 ## Key Components
@@ -207,7 +211,7 @@ python cli.py --help
 ```
 
 <a id="ingest-a-paper"></a>
-### Ingest a paper
+### 1. Ingest a paper
 
 From arXiv:
 
@@ -236,7 +240,7 @@ python cli.py ingest 1706.03762 --with-memory
 That runs ingest first, then builds structured paper memory as a second step.
 
 <a id="list-stored-papers"></a>
-### List stored papers
+### 2. List stored papers
 
 ```bash
 python cli.py papers
@@ -252,7 +256,7 @@ This prints locally stored papers with:
 - title
 
 <a id="search-stored-papers"></a>
-### Search stored papers
+### 3. Search stored papers
 
 ```bash
 python cli.py search-papers attention
@@ -263,7 +267,7 @@ python cli.py search-papers 1706.03762
 This searches local papers by title text, keyword, author text, venue/source text, and external id.
 
 <a id="build-paper-memory"></a>
-### Build paper memory
+### 4. Build paper memory
 
 ```bash
 python cli.py memory 1
@@ -274,7 +278,7 @@ python cli.py memory 1
 This runs the paper-memory prompt over the ingested paper text and stores the resulting JSON in both SQLite and `data/cache/`.
 
 <a id="ask-questions-about-a-paper"></a>
-### Ask questions about a paper
+### 5. Ask questions about a paper
 
 ```bash
 python cli.py ask 1 "What is the main contribution?"
@@ -286,7 +290,7 @@ This uses stored paper memory plus retrieved text chunks from the same paper.
 If you do not remember the numeric `paper_id`, use `python cli.py papers` or `python cli.py search-papers ...` first.
 
 <a id="run-topic-scan"></a>
-### Run topic scan
+### 6. Run topic scan
 
 ```bash
 python cli.py topic "diffusion models for video" --max-papers 25
@@ -356,7 +360,7 @@ If the report fails the SQLite persistence quality gate, Markdown and JSON cache
 - Semantic Scholar throttling is still preserved internally; adding `SEMANTIC_SCHOLAR_API_KEY` improves quota and reduces degraded-mode scans.
 
 <a id="generate-a-daily-digest"></a>
-### Generate a daily digest
+### 7. Generate a daily digest
 
 `digest` is the recent-paper triage workflow. It searches for papers published within a recent time window, groups them by one or more topics, asks the LLM to produce a concise recommendation table, and writes the result to `data/digests/`.
 
@@ -462,7 +466,9 @@ python cli.py digest --days 7 "animal dataset" "animal motion"
 
 What digest does internally:
 
-- searches recent papers for each topic
+- expands topic-like queries into lightweight query variants when helpful, including slash-separated inputs such as `rigging / articulation`
+- searches recent papers for each topic or expanded subquery
+- applies a lightweight lexical topic relevance filter before final recency retention
 - merges and deduplicates overlapping results across topics
 - sends candidate metadata to the digest prompt
 - writes a Markdown digest under `data/digests/`
