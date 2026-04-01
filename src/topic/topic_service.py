@@ -10,12 +10,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from core.config import Settings, load_settings
-from core.models import TopicReport
+from core.models import TopicReport, TopicRetrievedCandidate, TopicRetrievalSummary
 from db.database import initialize_database
 from db.repository import Repository
 from db.topic_repository import get_topic_reports, save_topic_report
 from retrieval.memory_retriever import get_relevant_paper_memories
-from topic.literature_search import LiteratureSearchRateLimitError, search_literature
+from topic.literature_search import (
+    LiteratureSearchRateLimitError,
+    search_literature_detailed,
+)
 from topic.topic_analyzer import (
     TopicAnalysisError,
     llm_output_to_topic_report,
@@ -33,7 +36,7 @@ from utils.paths import project_root as default_project_root
 
 logger = logging.getLogger(__name__)
 
-CACHE_VERSION = 5
+CACHE_VERSION = 6
 
 
 class TopicScanError(Exception):
@@ -55,6 +58,10 @@ def _cache_payload(report: TopicReport, topic: str, max_papers: int) -> dict[str
             "topic": topic,
             "max_papers": max_papers,
         },
+        "retrieval": report.retrieval_summary.model_dump(mode="json")
+        if report.retrieval_summary is not None
+        else None,
+        "candidates": [c.model_dump(mode="json") for c in report.retrieved_candidates],
         "report": report.model_dump(mode="json"),
     }
 
@@ -81,6 +88,27 @@ def _try_load_cache(
     except Exception as e:
         logger.warning("Invalid cached topic report: %s", e)
         return None
+    if tr.retrieval_summary is None and raw.get("retrieval"):
+        try:
+            tr = tr.model_copy(
+                update={
+                    "retrieval_summary": TopicRetrievalSummary.model_validate(raw.get("retrieval"))
+                }
+            )
+        except Exception as e:
+            logger.warning("Invalid retrieval summary in cache %s: %s", cache_path, e)
+    if not tr.retrieved_candidates and raw.get("candidates"):
+        try:
+            tr = tr.model_copy(
+                update={
+                    "retrieved_candidates": [
+                        TopicRetrievedCandidate.model_validate(item)
+                        for item in (raw.get("candidates") or [])
+                    ]
+                }
+            )
+        except Exception as e:
+            logger.warning("Invalid candidate appendix in cache %s: %s", cache_path, e)
     tr = tr.model_copy(
         update={
             "report_json_path": str(cache_path.resolve()),
@@ -149,13 +177,14 @@ def build_topic_report(
             # Fall through to regenerate if md missing
 
     try:
-        candidates = search_literature(t, max_results=max_papers, settings=settings)
+        retrieval_result = search_literature_detailed(t, max_results=max_papers, settings=settings)
     except LiteratureSearchRateLimitError as e:
         raise TopicScanError(str(e)) from e
     except Exception as e:
         logger.exception("Literature search failed")
         raise TopicScanError(f"Literature search failed: {e}") from e
 
+    candidates = retrieval_result.candidates
     if not candidates:
         raise TopicScanError(
             "No candidate papers returned. Check the topic string or try again later."
@@ -197,6 +226,7 @@ def build_topic_report(
             related_memories=related_memories,
             prior_claims_summary=prior_claims_summary,
             initial_topic_report_json=None,
+            retrieval_result=retrieval_result,
             model=model_light,
         )
     except TopicAnalysisError as e:
@@ -249,20 +279,37 @@ def build_topic_report(
                 related_memories=related_memories,
                 prior_claims_summary=prior_claims_summary,
                 initial_topic_report_json=initial_json,
+                retrieval_result=retrieval_result,
                 model=model_main,
             )
         except TopicAnalysisError as e:
             raise TopicScanError(str(e)) from e
 
-    report = llm_output_to_topic_report(t, llm_final, candidates)
+    report = llm_output_to_topic_report(
+        t,
+        llm_final,
+        candidates,
+        retrieval_result=retrieval_result,
+    )
     quality_final = evaluate_topic_report(llm_final, candidates)
+    md_body = render_topic_report_markdown(report)
+
+    write_text(md_path, md_body)
+    report = report.model_copy(
+        update={
+            "report_md_path": str(md_path.resolve()),
+            "report_json_path": str(cache_path.resolve()),
+        }
+    )
+    write_text(cache_path, json.dumps(_cache_payload(report, t, max_papers), ensure_ascii=False, indent=2) + "\n")
+
     persist_ok, persist_reason = report_meets_persistence_bar(
         llm_final,
         quality_score=quality_final["quality_score"],
     )
     if not persist_ok:
         logger.warning(
-            "Topic report not persisted (quality gate: %s): quality_score=%s issues=%s",
+            "Topic report skipped DB persistence (quality gate: %s): quality_score=%s issues=%s",
             persist_reason,
             quality_final["quality_score"],
             quality_final.get("issues", []),
@@ -272,15 +319,6 @@ def build_topic_report(
     logger.info(
         "Topic report passed persistence gate: quality_score=%s",
         quality_final["quality_score"],
-    )
-    md_body = render_topic_report_markdown(report)
-
-    write_text(md_path, md_body)
-    report = report.model_copy(
-        update={
-            "report_md_path": str(md_path.resolve()),
-            "report_json_path": str(cache_path.resolve()),
-        }
     )
 
     conn = initialize_database(settings=settings, project_root=root)

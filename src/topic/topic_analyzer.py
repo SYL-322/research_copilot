@@ -10,9 +10,16 @@ from typing import Any
 from pydantic import ValidationError
 
 from core.config import Settings
-from core.models import TopicPaperMention, TopicReport, TopicReportLlmOutput
+from core.models import (
+    TopicPaperMention,
+    TopicProviderStat,
+    TopicReport,
+    TopicReportLlmOutput,
+    TopicRetrievedCandidate,
+    TopicRetrievalSummary,
+)
 from llm.openai_client import OpenAIClient, strip_json_fences
-from topic.literature_search import CandidatePaper
+from topic.literature_search import CandidatePaper, LiteratureSearchResult
 from utils.text_normalize import normalize_title
 
 logger = logging.getLogger(__name__)
@@ -31,6 +38,63 @@ def load_topic_prompt(project_root: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _analysis_mode(related_memories: list[dict[str, Any]] | None) -> str:
+    return "memory_backed" if related_memories else "metadata_only"
+
+
+def build_topic_prompt(
+    topic: str,
+    candidates: list[CandidatePaper],
+    *,
+    project_root: Path,
+    related_memories: list[dict[str, Any]] | None = None,
+    prior_claims_summary: list[str] | None = None,
+    initial_topic_report_json: str | None = None,
+    retrieval_result: LiteratureSearchResult | None = None,
+) -> str:
+    """Render the topic-scan prompt with explicit mode and retrieval context."""
+    payload = [c.as_prompt_dict() for c in candidates]
+    papers_json = json.dumps(payload, ensure_ascii=False, indent=2)
+    memories = related_memories or []
+    memories_json = json.dumps(memories, ensure_ascii=False, indent=2)
+    prior_claims_json = json.dumps(prior_claims_summary or [], ensure_ascii=False, indent=2)
+    initial_slot = (
+        initial_topic_report_json.strip()
+        if initial_topic_report_json and initial_topic_report_json.strip()
+        else "null"
+    )
+    mode = _analysis_mode(memories)
+    stats_json = json.dumps(
+        retrieval_result.as_dict() if retrieval_result is not None else {},
+        ensure_ascii=False,
+        indent=2,
+    )
+
+    template = load_topic_prompt(project_root)
+    required = (
+        "{{TOPIC}}",
+        "{{ANALYSIS_MODE}}",
+        "{{CANDIDATE_PAPERS_JSON}}",
+        "{{RELATED_PAPER_MEMORIES_JSON}}",
+        "{{PRIOR_CLAIMS_SUMMARY_JSON}}",
+        "{{INITIAL_TOPIC_REPORT_JSON}}",
+        "{{RETRIEVAL_STATS_JSON}}",
+    )
+    for ph in required:
+        if ph not in template:
+            raise TopicAnalysisError(f"Prompt template must contain {ph}.")
+
+    return (
+        template.replace("{{TOPIC}}", topic.strip())
+        .replace("{{ANALYSIS_MODE}}", mode)
+        .replace("{{CANDIDATE_PAPERS_JSON}}", papers_json)
+        .replace("{{RELATED_PAPER_MEMORIES_JSON}}", memories_json)
+        .replace("{{PRIOR_CLAIMS_SUMMARY_JSON}}", prior_claims_json)
+        .replace("{{INITIAL_TOPIC_REPORT_JSON}}", initial_slot)
+        .replace("{{RETRIEVAL_STATS_JSON}}", stats_json)
+    )
+
+
 def synthesize_topic_report(
     topic: str,
     candidates: list[CandidatePaper],
@@ -40,6 +104,7 @@ def synthesize_topic_report(
     related_memories: list[dict[str, Any]] | None = None,
     prior_claims_summary: list[str] | None = None,
     initial_topic_report_json: str | None = None,
+    retrieval_result: LiteratureSearchResult | None = None,
     model: str | None = None,
     temperature: float = 0.25,
 ) -> TopicReportLlmOutput:
@@ -58,37 +123,23 @@ def synthesize_topic_report(
     if not candidates:
         raise TopicAnalysisError("No candidate papers from literature search.")
 
-    payload = [c.as_prompt_dict() for c in candidates]
-    papers_json = json.dumps(payload, ensure_ascii=False, indent=2)
     memories = related_memories or []
-    memories_json = json.dumps(memories, ensure_ascii=False, indent=2)
     prior_claims = prior_claims_summary or []
-    prior_claims_json = json.dumps(prior_claims, ensure_ascii=False, indent=2)
     initial_slot = (
         initial_topic_report_json.strip()
         if initial_topic_report_json and initial_topic_report_json.strip()
         else "null"
     )
     refining = initial_slot not in ("null", "{}", "")
-
-    template = load_topic_prompt(project_root)
-    required = (
-        "{{TOPIC}}",
-        "{{CANDIDATE_PAPERS_JSON}}",
-        "{{RELATED_PAPER_MEMORIES_JSON}}",
-        "{{PRIOR_CLAIMS_SUMMARY_JSON}}",
-        "{{INITIAL_TOPIC_REPORT_JSON}}",
-    )
-    for ph in required:
-        if ph not in template:
-            raise TopicAnalysisError(f"Prompt template must contain {ph}.")
-
-    user_content = (
-        template.replace("{{TOPIC}}", t)
-        .replace("{{CANDIDATE_PAPERS_JSON}}", papers_json)
-        .replace("{{RELATED_PAPER_MEMORIES_JSON}}", memories_json)
-        .replace("{{PRIOR_CLAIMS_SUMMARY_JSON}}", prior_claims_json)
-        .replace("{{INITIAL_TOPIC_REPORT_JSON}}", initial_slot)
+    mode = _analysis_mode(memories)
+    user_content = build_topic_prompt(
+        t,
+        candidates,
+        project_root=project_root,
+        related_memories=memories,
+        prior_claims_summary=prior_claims,
+        initial_topic_report_json=initial_slot,
+        retrieval_result=retrieval_result,
     )
 
     client = OpenAIClient(settings)
@@ -101,6 +152,17 @@ def synthesize_topic_report(
         "When paper memories are provided, prefer them over metadata for "
         "method detail, assumptions, design rationale, and limitations.",
     ]
+    if mode == "metadata_only":
+        sys_parts.append(
+            " Metadata-only mode: do not claim method details, failure modes, or design rationale "
+            "unless they are explicit in the title/abstract metadata. Be conservative and say when "
+            "evidence is limited to metadata."
+        )
+    else:
+        sys_parts.append(
+            " Memory-backed mode: use paper memories to make deeper cross-paper comparisons, but "
+            "stay grounded in the provided memory fields and candidate metadata."
+        )
     if prior_claims:
         sys_parts.append(
             " PRIOR_CLAIMS_SUMMARY_JSON lists short hypotheses from earlier topic snapshots—"
@@ -181,13 +243,49 @@ def llm_output_to_topic_report(
     topic: str,
     llm: TopicReportLlmOutput,
     candidates: list[CandidatePaper],
+    *,
+    retrieval_result: LiteratureSearchResult | None = None,
 ) -> TopicReport:
     """Build a :class:`TopicReport` domain object from LLM output."""
     summary = (llm.topic_summary or "").strip()
     if len(summary) > 400:
         summary = summary[:397] + "..."
+    mention_count = (
+        len(llm.foundational_papers)
+        + len(llm.representative_papers)
+        + len(llm.recent_valuable_papers)
+        + len(llm.lower_priority_or_overhyped)
+    )
+    retrieval_summary: TopicRetrievalSummary | None = None
+    if retrieval_result is not None:
+        retrieval_summary = TopicRetrievalSummary(
+            normalized_topic=retrieval_result.normalized_topic,
+            query_variants=list(retrieval_result.query_variants),
+            raw_candidates=retrieval_result.raw_candidates,
+            deduped_candidates=retrieval_result.deduped_candidates,
+            final_candidates=retrieval_result.final_candidates,
+            report_paper_mentions=mention_count,
+            provider_stats=[
+                TopicProviderStat.model_validate(stat.as_dict()) for stat in retrieval_result.provider_stats
+            ],
+        )
+    retrieved_candidates = [
+        TopicRetrievedCandidate(
+            title=c.title,
+            authors=list(c.authors),
+            year=c.year,
+            url=c.url,
+            arxiv_id=c.arxiv_id,
+            venue=c.venue,
+            source=c.source,
+            source_signals=list(c.source_signals),
+            matched_queries=list(c.matched_queries),
+        )
+        for c in candidates
+    ]
     return TopicReport(
         topic=topic.strip(),
+        analysis_mode=llm.analysis_mode,
         topic_summary=llm.topic_summary,
         branches_subthemes=list(llm.branches_subthemes),
         foundational_papers=_filter_mentions(list(llm.foundational_papers), candidates),
@@ -202,6 +300,8 @@ def llm_output_to_topic_report(
         cross_paper_insights=list(llm.cross_paper_insights),
         method_comparison_summary=llm.method_comparison_summary,
         evolution_notes=llm.evolution_notes,
+        retrieval_summary=retrieval_summary,
+        retrieved_candidates=retrieved_candidates,
         summary=summary or None,
     )
 
@@ -213,6 +313,37 @@ def render_topic_report_markdown(report: TopicReport) -> str:
     lines.append("## Summary\n")
     lines.append((report.topic_summary or "").strip() or "_No summary._")
     lines.append("")
+
+    lines.append("## Scan mode\n")
+    if report.analysis_mode == "memory_backed":
+        lines.append("Memory-backed mode: local paper memories were available and used for deeper comparison.")
+    else:
+        lines.append(
+            "Metadata-only mode: analysis is grounded only in search metadata; method details and failure-mode "
+            "claims should be treated as limited."
+        )
+    lines.append("")
+
+    if report.retrieval_summary is not None:
+        lines.append("## Retrieval stats\n")
+        rs = report.retrieval_summary
+        if rs.query_variants:
+            lines.append(f"- Query variants used: {', '.join(f'`{q}`' for q in rs.query_variants)}")
+        lines.append(f"- arXiv returned: {next((s.raw_results for s in rs.provider_stats if s.provider == 'arxiv'), 0)}")
+        lines.append(
+            f"- Semantic Scholar returned: "
+            f"{next((s.raw_results for s in rs.provider_stats if s.provider == 'semantic_scholar'), 0)}"
+        )
+        lines.append(f"- Deduped candidates: {rs.deduped_candidates}")
+        lines.append(f"- Final retrieved candidates retained: {rs.final_candidates}")
+        lines.append(f"- Final report paper mentions: {rs.report_paper_mentions}")
+        for stat in rs.provider_stats:
+            if stat.errors or stat.rate_limited:
+                problems = list(stat.errors)
+                if stat.rate_limited and "rate_limited" not in problems:
+                    problems.append("rate_limited")
+                lines.append(f"- {stat.provider} status: {', '.join(problems)}")
+        lines.append("")
 
     if (report.evolution_notes or "").strip():
         lines.append("## Evolution notes\n")
@@ -294,5 +425,27 @@ def render_topic_report_markdown(report: TopicReport) -> str:
         lines.append(f"- {x}")
     if not report.open_questions:
         lines.append("_None listed._")
+    lines.append("")
+
+    lines.append("## All retrieved candidate papers\n")
+    if report.retrieved_candidates:
+        for p in report.retrieved_candidates:
+            meta: list[str] = []
+            if p.year is not None:
+                meta.append(str(p.year))
+            if p.venue:
+                meta.append(p.venue)
+            signals = ", ".join(p.source_signals or ([p.source] if p.source else []))
+            if signals:
+                meta.append(f"sources: {signals}")
+            lines.append(f"- **{p.title}**" + (f" ({'; '.join(meta)})" if meta else ""))
+            if p.arxiv_id:
+                lines.append(f"  - arXiv: `{p.arxiv_id}`")
+            if p.url:
+                lines.append(f"  - URL: {p.url}")
+            if p.matched_queries:
+                lines.append(f"  - Matched queries: {', '.join(f'`{q}`' for q in p.matched_queries)}")
+    else:
+        lines.append("_No candidates recorded._")
 
     return "\n".join(lines).strip() + "\n"

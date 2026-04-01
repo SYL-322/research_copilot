@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -193,11 +193,55 @@ class TopicPaperMention(BaseModel):
     """Why it is listed in this category (faithful to provided metadata)."""
 
 
+class TopicRetrievedCandidate(BaseModel):
+    """Candidate-paper metadata persisted for transparency and report appendix."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = ""
+    authors: list[str] = Field(default_factory=list)
+    year: int | None = None
+    url: str | None = None
+    arxiv_id: str | None = None
+    venue: str | None = None
+    source: str = ""
+    source_signals: list[str] = Field(default_factory=list)
+    matched_queries: list[str] = Field(default_factory=list)
+
+
+class TopicProviderStat(BaseModel):
+    """Provider-level retrieval stats for one topic scan."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    provider: str = ""
+    query_variants: list[str] = Field(default_factory=list)
+    raw_results: int = 0
+    unique_results: int = 0
+    errors: list[str] = Field(default_factory=list)
+    rate_limited: bool = False
+
+
+class TopicRetrievalSummary(BaseModel):
+    """Aggregated retrieval accounting for a topic scan."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    normalized_topic: str = ""
+    query_variants: list[str] = Field(default_factory=list)
+    raw_candidates: int = 0
+    deduped_candidates: int = 0
+    final_candidates: int = 0
+    report_paper_mentions: int = 0
+    provider_stats: list[TopicProviderStat] = Field(default_factory=list)
+
+
 class TopicReportLlmOutput(BaseModel):
     """Strict JSON from the topic-scan LLM."""
 
     model_config = ConfigDict(extra="forbid")
 
+    analysis_mode: Literal["metadata_only", "memory_backed"] = "metadata_only"
     topic_summary: str = ""
     branches_subthemes: list[Subtheme] = Field(default_factory=list)
     foundational_papers: list[TopicPaperMention] = Field(default_factory=list)
@@ -235,6 +279,7 @@ class TopicReport(BaseModel):
 
     id: int | None = None
     topic: str = ""
+    analysis_mode: Literal["metadata_only", "memory_backed"] = "metadata_only"
     topic_summary: str = ""
     branches_subthemes: list[Subtheme] = Field(default_factory=list)
     foundational_papers: list[TopicPaperMention] = Field(default_factory=list)
@@ -249,6 +294,8 @@ class TopicReport(BaseModel):
     cross_paper_insights: list[str] = Field(default_factory=list)
     method_comparison_summary: str = ""
     evolution_notes: str = ""
+    retrieval_summary: TopicRetrievalSummary | None = None
+    retrieved_candidates: list[TopicRetrievedCandidate] = Field(default_factory=list)
     report_md_path: str | None = None
     report_json_path: str | None = None
     summary: str | None = Field(

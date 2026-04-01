@@ -70,7 +70,12 @@ Topic scan builds a structured report for a research topic from:
 - locally stored paper memories that lexically match the topic
 - a short summary of prior topic reports
 
-The report includes subthemes, representative papers, recent trends, open questions, evidence quality notes, missing directions, and a research-frontier summary.
+The report includes subthemes, representative papers, recent trends, open questions, evidence quality notes, missing directions, a research-frontier summary, retrieval statistics, and a full appendix of retrieved candidates.
+
+Topic scan now runs in two distinct grounding modes:
+
+- **metadata-only mode**: only search metadata is available, so the report stays conservative about method details and limitations
+- **memory-backed mode**: local paper memories are available for part of the candidate set, so the report can make deeper cross-paper comparisons
 
 ### Topic memory
 
@@ -218,9 +223,11 @@ python cli.py topic "diffusion models for video" --max-papers 25
 This:
 
 - searches arXiv and Semantic Scholar
+- expands and normalizes the topic into multiple subqueries before merging results
 - finds locally relevant paper memories
 - builds a structured topic report
 - writes Markdown under `data/topics/`
+- writes a JSON cache under `data/cache/`
 - stores a versioned report snapshot in SQLite when quality heuristics allow persistence
 
 ### Use high-quality mode
@@ -230,6 +237,50 @@ python cli.py topic "test-time compute" --max-papers 30 --high-quality
 ```
 
 `--high-quality` forces the second topic-scan refinement pass even if the heuristic router would otherwise skip it.
+
+### Force refresh topic scan
+
+```bash
+python cli.py topic "4d object reconstruction / generation" --max-papers 20 --force
+```
+
+`--force` bypasses the topic JSON cache for that `(topic, max_papers)` pair and reruns retrieval plus LLM synthesis. Without `--force`, the CLI reuses the cached topic report when the cache version, topic string, and `--max-papers` value match.
+
+## Topic Report Output
+
+Each topic scan writes:
+
+- `data/topics/<slug>_report.md`: human-readable Markdown report
+- `data/cache/topic_report_<slug>.json`: JSON cache with the structured report, retrieval summary, and retrieved candidate appendix
+
+### Markdown sections
+
+The topic report Markdown includes:
+
+- **Summary**: concise landscape summary
+- **Scan mode**: whether the report is metadata-only or memory-backed
+- **Retrieval stats**: arXiv count, Semantic Scholar count, deduped count, retained candidate count, final report mention count, and provider failures / rate limits
+- **Evidence quality**: explicit confidence and coverage limits
+- **Branches / subthemes**: major clusters in the topic
+- **Paper lists**: foundational, representative, recent valuable, lower-priority / possibly overhyped
+- **Recent trends / Open questions**: grounded synthesis from the retrieved set
+- **All retrieved candidate papers**: appendix listing every retained candidate with title, year, source(s), URL, and arXiv id when available
+
+### Cache behavior
+
+Topic scan caching is per topic slug and `--max-papers` value. The JSON cache stores:
+
+- the rendered structured topic report
+- retrieval query variants and provider stats
+- the retained candidate-paper list used for the report appendix
+
+If the report fails the SQLite persistence quality gate, Markdown and JSON cache files are still written; only the topic-memory snapshot is skipped.
+
+### Provider degraded mode and rate limits
+
+- If one provider succeeds and the other fails or is rate-limited, topic scan continues in degraded mode and records that status in the Markdown retrieval section and JSON cache.
+- If both providers effectively fail and the failure is due to rate limiting, topic scan raises a rate-limit error.
+- Semantic Scholar throttling is still preserved internally; adding `SEMANTIC_SCHOLAR_API_KEY` improves quota and reduces degraded-mode scans.
 
 ### Generate a daily digest
 

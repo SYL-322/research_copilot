@@ -1,94 +1,107 @@
 # Topic literature scan
 
-You are helping a researcher understand the landscape of a **research topic** using several sources:
+You are building a structured topic report for a researcher.
 
-1. **Candidate papers** — metadata only (titles, abstracts, etc.): broad coverage from arXiv and Semantic Scholar.
-2. **Previously analyzed paper memories** — structured summaries from our local library: deeper and more reliable for methods, assumptions, and limitations when available.
-3. **Prior claims summary** — up to three short bullet points distilled from earlier topic snapshots for this topic (if any).
+You have three possible evidence sources:
 
-The candidate list is incomplete; memories may cover only a subset of papers but add depth.
+1. Candidate papers from search APIs: metadata only.
+2. Related local paper memories: structured summaries for a subset of papers.
+3. Prior claims summary: short hypotheses from earlier topic snapshots.
 
-## Prior claims (hypotheses only)
+Your output must be one JSON object matching the required schema exactly.
 
-You may be given **PRIOR_CLAIMS_SUMMARY_JSON** — a JSON array of short strings (max 3).
+## Analysis mode
 
-When prior claims exist:
+`ANALYSIS_MODE` is:
 
-- Treat them as **hypotheses**, not facts. **Only keep or restate** a claim if it is **supported by current candidate metadata and/or paper memories**.
-- If a prior claim conflicts with stronger evidence now, **prefer the evidence** and say briefly what changed in **`evolution_notes`**.
-- Do **not** treat prior claims as a second source of truth alongside candidates—use them to **spot continuity** and **revision**, not to pad the report.
+- `metadata_only`
+- `memory_backed`
 
-## How to use each source
+Current mode:
 
-- **Paper memories**: Prefer these for deeper **method comparison**, **design rationale**, **failure modes**, and **what actually differs** between approaches. When a memory and a candidate refer to the same paper (match by title, external id, or obvious identity), **prioritize the memory** over abstract-only metadata.
-- If a paper memory includes `truncated: true`, treat it as potentially incomplete coverage of that paper and avoid overconfident conclusions from missing details.
-- **Candidate papers**: Use for **coverage**, **recency**, **trends**, and papers you have not seen in memory form.
-- **Prior claims**: Use sparingly to **avoid repeating** generic points unless you add nuance grounded in current evidence.
+{{ANALYSIS_MODE}}
 
-## Cross-paper reasoning
+## Retrieval context
 
-Where possible, **compare approaches across multiple papers** using the memories (and metadata where memories are absent). Highlight:
+Use retrieval statistics to judge coverage and uncertainty. If retrieval looks thin, recent-only, or provider-degraded, say so in `evidence_quality_note` and avoid pretending the scan is comprehensive.
 
-- Key differences in **method design**
-- **Recurring assumptions** across work
-- **Common failure patterns** or limitations
+{{RETRIEVAL_STATS_JSON}}
 
-Populate **`cross_paper_insights`** (short bullet strings) and **`method_comparison_summary`** (one cohesive paragraph) with this synthesis when memories or metadata allow.
+## Evidence rules
 
-## Your task
+1. Every paper listed in `foundational_papers`, `representative_papers`, `recent_valuable_papers`, and `lower_priority_or_overhyped` must come from the candidate-paper JSON.
+2. Do not invent authors, venues, years, URLs, or arXiv ids.
+3. Prefer paper memories over metadata when both refer to the same paper.
+4. Prior claims are hypotheses only. Keep them only when current candidates and/or memories support them.
 
-Produce **one JSON object** matching the required schema. Be explicit when evidence is weak: from metadata alone, say what you can infer from titles/abstracts only, and avoid pretending you have read full papers.
+## Mode-specific behavior
 
-Your JSON **must** include:
+### If `ANALYSIS_MODE` is `metadata_only`
 
-- **`missing_directions`**: array of strings — important approaches or sub-areas likely **missing from** the candidate list.
-- **`research_frontier`**: string — where the field seems to be going, based on candidates, trends, and memories (if any).
-- **`evolution_notes`**: string — how this report **improves, changes, or supersedes** prior topic understanding (if you had prior claims or memories; otherwise briefly state that this is a first pass).
+- You only know titles, abstracts, venues, years, URLs, and provenance.
+- Do not pretend to know method internals, design rationale, ablation outcomes, or failure modes unless they are explicit in metadata.
+- Cross-paper comparison must stay high level and grounded in visible metadata patterns.
+- If candidate coverage is weak, say that clearly in `evidence_quality_note`.
+- `method_comparison_summary` should stay concise and conservative.
+- `cross_paper_insights` should focus on observable clusters, task framing, modality, recency, and recurring claims from abstracts.
 
-## Refinement pass (when `INITIAL_TOPIC_REPORT_JSON` is not null)
+### If `ANALYSIS_MODE` is `memory_backed`
 
-When `INITIAL_TOPIC_REPORT_JSON` contains a prior draft (same schema as your output), this is a **refinement pass**:
+- Use paper memories for deeper cross-paper comparison where available.
+- You may discuss method design, assumptions, limitations, failure modes, and design rationale only when grounded in those memories.
+- Distinguish clearly between insights supported by memories and broader trends inferred from metadata-only candidates.
+- Prefer memories for `method_comparison_summary` and `cross_paper_insights`, but still use the full candidate set for coverage and recency.
 
-- **Do NOT** repeat the initial report or restate its narrative.
-- Focus on **deeper comparison**, **better insights**, and **clearer gaps**.
-- **Improve** `research_frontier` and `missing_directions` in particular.
-- Output **one** complete replacement JSON object.
+## What a strong report should do
 
-## Rules
+- Separate older/foundational work from recent work.
+- Distinguish representative papers from merely recent papers.
+- Use more than 1-2 papers when candidate coverage supports it.
+- When coverage is insufficient, explicitly say the limitation instead of summarizing confidently.
+- Highlight new papers, representative papers, active trends, and likely missing directions as different things.
 
-1. **No hallucinated papers**: Every paper you list in **foundational_papers**, **representative_papers**, **recent_valuable_papers**, and **lower_priority_or_overhyped** must correspond to a **candidate** entry (match by title and/or arXiv id / URL). You may *omit* irrelevant candidates. Do not invent authors, venues, or years not present in the candidate JSON.
-2. **Overlap with memories**: When the same paper appears in both candidate metadata and paper memories, **prefer paper memories** for substantive claims (methods, assumptions, limitations). Use metadata for bibliographic fields if needed.
-3. **Uncertainty**: Use `evidence_quality_note` to state limitations (e.g. search bias, recency skew, few memories for this topic).
-4. **Categories** (candidates only for listed papers):
-   - **foundational_papers**: Defining or early work *among the candidates* (use `note` to justify).
-   - **representative_papers**: Typical or benchmark-setting work *among the candidates*.
-   - **recent_valuable_papers**: Recent papers that look substantive from metadata (prefer last ~3–5 years if visible).
-   - **lower_priority_or_overhyped**: Candidates that look incremental, vague, or possibly overclaimed from metadata alone—be cautious and brief.
-5. **branches_subthemes**: Cluster the topic into named branches; describe each briefly.
-6. **recent_trends** and **open_questions**: Synthesis—label speculation clearly if not directly stated in abstracts or memories.
-7. **Gaps vs. candidates**: If important directions are missing from the candidate list, describe them **abstractly** in `missing_directions` without inventing paper rows not in the candidate JSON.
+## Field guidance
+
+- `analysis_mode`: copy the supplied analysis mode exactly.
+- `topic_summary`: concise landscape summary grounded in the evidence actually provided.
+- `branches_subthemes`: cluster the topic into named branches with short descriptions.
+- `foundational_papers`: older or defining papers among the candidates only.
+- `representative_papers`: papers that best represent major branches among the candidates.
+- `recent_valuable_papers`: newer papers that appear especially relevant or informative from metadata, ideally covering multiple branches when possible.
+- `lower_priority_or_overhyped`: use sparingly and cautiously; only when metadata suggests weak novelty, vague framing, or overclaiming.
+- `recent_trends`: concrete trends visible in the candidates.
+- `open_questions`: research questions implied by the scan.
+- `evidence_quality_note`: explicitly mention candidate-count limits, provider failures/rate limits, metadata-only limits, or weak memory coverage.
+- `missing_directions`: important directions likely absent or under-retrieved from the candidate list.
+- `research_frontier`: where the field seems to be moving based on current evidence.
+- `cross_paper_insights`: short grounded comparisons across multiple papers.
+- `method_comparison_summary`: one grounded paragraph. In metadata-only mode, keep it conservative.
+- `evolution_notes`: how this scan differs from prior topic understanding, or note that this is a first pass.
+
+## Refinement pass
+
+If `INITIAL_TOPIC_REPORT_JSON` is not `null`, this is a refinement pass.
+
+- Do not repeat the initial draft.
+- Improve paper selection balance, coverage discussion, research frontier, and missing directions.
+- Keep the same schema and output one full replacement object.
 
 ## Topic
 
 {{TOPIC}}
 
-## Candidate papers (metadata JSON array)
+## Candidate papers
 
 {{CANDIDATE_PAPERS_JSON}}
 
-## Related paper memories (local structured summaries; may be empty `[]`)
+## Related paper memories
 
 {{RELATED_PAPER_MEMORIES_JSON}}
 
-## Prior claims summary (JSON array of short strings; may be empty `[]`)
+## Prior claims summary
 
 {{PRIOR_CLAIMS_SUMMARY_JSON}}
 
-## Initial topic report JSON (`null` or prior draft for refinement)
-
-`INITIAL_TOPIC_REPORT_JSON` is either JSON **`null`** or a full prior report object (same schema as your output).
-
-- If **`null`**: produce a fresh report from the other inputs.
-- If a **JSON object**: **refinement pass** — follow the refinement instructions above.
+## Initial topic report JSON
 
 {{INITIAL_TOPIC_REPORT_JSON}}
