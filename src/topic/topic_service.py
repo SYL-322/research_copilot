@@ -15,7 +15,7 @@ from db.database import initialize_database
 from db.repository import Repository
 from db.topic_repository import get_topic_reports, save_topic_report
 from retrieval.memory_retriever import get_relevant_paper_memories
-from topic.literature_search import search_literature
+from topic.literature_search import LiteratureSearchRateLimitError, search_literature
 from topic.topic_analyzer import (
     TopicAnalysisError,
     llm_output_to_topic_report,
@@ -150,6 +150,8 @@ def build_topic_report(
 
     try:
         candidates = search_literature(t, max_results=max_papers, settings=settings)
+    except LiteratureSearchRateLimitError as e:
+        raise TopicScanError(str(e)) from e
     except Exception as e:
         logger.exception("Literature search failed")
         raise TopicScanError(f"Literature search failed: {e}") from e

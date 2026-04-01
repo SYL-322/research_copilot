@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from typing import Final
@@ -18,8 +19,82 @@ logger = logging.getLogger(__name__)
 _ATOM: Final = "{http://www.w3.org/2005/Atom}"
 _ARXIV_NS: Final = "{http://arxiv.org/schemas/atom}"
 
-ARXIV_API = "http://export.arxiv.org/api/query"
+ARXIV_API = "https://export.arxiv.org/api/query"
 SEMANTIC_SCHOLAR_SEARCH = "https://api.semanticscholar.org/graph/v1/paper/search"
+DEFAULT_HEADERS: Final = {
+    "User-Agent": "research_copilot/1.0 (+https://github.com/)",
+}
+SEARCH_RETRY_DELAYS: Final[tuple[float, ...]] = (1.0, 2.0)
+_last_search_rate_limited_sources: set[str] = set()
+
+
+class LiteratureSearchRateLimitError(RuntimeError):
+    """Raised when literature search providers are temporarily rate-limiting us."""
+
+
+def _parse_retry_after(value: str | None) -> float | None:
+    if not value:
+        return None
+    try:
+        seconds = float(value.strip())
+    except ValueError:
+        return None
+    return max(0.0, min(seconds, 30.0))
+
+
+def _mark_rate_limited(source: str) -> None:
+    _last_search_rate_limited_sources.add(source)
+
+
+def _should_retry_http_error(exc: httpx.HTTPStatusError) -> bool:
+    code = exc.response.status_code
+    return code == 429 or 500 <= code < 600
+
+
+def _request_with_retries(
+    client: httpx.Client,
+    method: str,
+    url: str,
+    *,
+    params: dict[str, str | int] | None = None,
+    headers: dict[str, str] | None = None,
+) -> httpx.Response:
+    attempts = len(SEARCH_RETRY_DELAYS) + 1
+    merged_headers = dict(DEFAULT_HEADERS)
+    if headers:
+        merged_headers.update(headers)
+    for attempt in range(attempts):
+        try:
+            response = client.request(method, url, params=params, headers=merged_headers)
+            response.raise_for_status()
+            return response
+        except httpx.HTTPStatusError as exc:
+            if attempt >= attempts - 1 or not _should_retry_http_error(exc):
+                raise
+            retry_after = _parse_retry_after(exc.response.headers.get("Retry-After"))
+            delay = retry_after if retry_after is not None else SEARCH_RETRY_DELAYS[attempt]
+            logger.warning(
+                "HTTP %s from %s; retrying in %.1fs (attempt %s/%s)",
+                exc.response.status_code,
+                url,
+                delay,
+                attempt + 1,
+                attempts,
+            )
+            time.sleep(delay)
+        except httpx.TransportError:
+            if attempt >= attempts - 1:
+                raise
+            delay = SEARCH_RETRY_DELAYS[attempt]
+            logger.warning(
+                "Transport error from %s; retrying in %.1fs (attempt %s/%s)",
+                url,
+                delay,
+                attempt + 1,
+                attempts,
+            )
+            time.sleep(delay)
+    raise RuntimeError("unreachable")
 
 
 @dataclass
@@ -99,8 +174,12 @@ def search_arxiv(
     logger.info("arXiv search: %s", url[:120])
     try:
         with httpx.Client(timeout=timeout, follow_redirects=True) as client:
-            r = client.get(url)
-            r.raise_for_status()
+            r = _request_with_retries(client, "GET", url)
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 429:
+            _mark_rate_limited("arxiv")
+        logger.warning("arXiv search failed: %s", e)
+        return []
     except httpx.HTTPError as e:
         logger.warning("arXiv search failed: %s", e)
         return []
@@ -191,9 +270,19 @@ def search_semantic_scholar(
     logger.info("Semantic Scholar search (limit=%s)", params["limit"])
     try:
         with httpx.Client(timeout=timeout, follow_redirects=True) as client:
-            r = client.get(SEMANTIC_SCHOLAR_SEARCH, params=params, headers=headers)
-            r.raise_for_status()
+            r = _request_with_retries(
+                client,
+                "GET",
+                SEMANTIC_SCHOLAR_SEARCH,
+                params=params,
+                headers=headers,
+            )
             data = r.json()
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 429:
+            _mark_rate_limited("semantic_scholar")
+        logger.warning("Semantic Scholar search failed: %s", e)
+        return []
     except (httpx.HTTPError, ValueError) as e:
         logger.warning("Semantic Scholar search failed: %s", e)
         return []
@@ -258,6 +347,11 @@ def search_literature(
     Search arXiv and Semantic Scholar, merge, dedupe, and cap to ``max_results``.
 
     Splits the budget roughly evenly between sources (when both succeed).
+
+    Raises
+    ------
+    LiteratureSearchRateLimitError
+        When both providers return no results and at least one appears rate-limited.
     """
     from core.config import load_settings
 
@@ -270,6 +364,7 @@ def search_literature(
     n_arx = min(half, max_results)
     n_ss = max_results - n_arx
     timeout = settings.http_timeout
+    _last_search_rate_limited_sources.clear()
 
     arx = search_arxiv(t, max_results=n_arx, timeout=timeout)
     ss = search_semantic_scholar(
@@ -281,4 +376,15 @@ def search_literature(
 
     merged = arx + ss
     merged = dedupe_candidates(merged)
+    if merged:
+        return merged[:max_results]
+
+    if _last_search_rate_limited_sources:
+        names = ", ".join(sorted(_last_search_rate_limited_sources))
+        raise LiteratureSearchRateLimitError(
+            "Literature providers are rate-limiting requests right now "
+            f"({names}). Wait a bit and retry. If Semantic Scholar is involved, "
+            "configure `SEMANTIC_SCHOLAR_API_KEY` to improve quota."
+        )
+
     return merged[:max_results]
