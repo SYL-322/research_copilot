@@ -47,11 +47,46 @@ class TestCliParser(unittest.TestCase):
         self.assertTrue(args.save)
         self.assertEqual(args.question, ["What", "is", "this?"])
 
+    def test_ask_save_parse_when_flag_is_after_question(self) -> None:
+        p = cli_mod.build_parser()
+        args = p.parse_args(["ask", "3", "What", "is", "this?", "--save"])
+        self.assertEqual(args.command, "ask")
+        self.assertEqual(args.paper_id, "3")
+        self.assertTrue(args.save)
+        self.assertEqual(args.question, ["What", "is", "this?"])
+
     def test_ask_log_parse(self) -> None:
         p = cli_mod.build_parser()
         args = p.parse_args(["ask-log", "3"])
         self.assertEqual(args.command, "ask-log")
         self.assertEqual(args.paper_id, "3")
+
+    def test_ask_log_tail_parse(self) -> None:
+        p = cli_mod.build_parser()
+        args = p.parse_args(["ask-log", "3", "--tail", "2"])
+        self.assertEqual(args.command, "ask-log")
+        self.assertEqual(args.paper_id, "3")
+        self.assertEqual(args.tail, 2)
+
+    def test_ask_log_delete_parse(self) -> None:
+        p = cli_mod.build_parser()
+        args = p.parse_args(["ask-log-delete", "3"])
+        self.assertEqual(args.command, "ask-log-delete")
+        self.assertEqual(args.paper_id, "3")
+
+    def test_ask_log_delete_index_parse(self) -> None:
+        p = cli_mod.build_parser()
+        args = p.parse_args(["ask-log-delete", "3", "--index", "2"])
+        self.assertEqual(args.command, "ask-log-delete")
+        self.assertEqual(args.paper_id, "3")
+        self.assertEqual(args.index, 2)
+
+    def test_ask_log_delete_question_parse(self) -> None:
+        p = cli_mod.build_parser()
+        args = p.parse_args(["ask-log-delete", "3", "--question", "slot attention"])
+        self.assertEqual(args.command, "ask-log-delete")
+        self.assertEqual(args.paper_id, "3")
+        self.assertEqual(args.question, "slot attention")
 
     def test_digest_parse(self) -> None:
         p = cli_mod.build_parser()
@@ -206,6 +241,24 @@ class TestCliCommands(unittest.TestCase):
         self.assertIn("Test answer.", out.getvalue())
         self.assertIn("Saved:", err.getvalue())
 
+    def test_cmd_ask_save_persists_answer_when_flag_is_after_question(self) -> None:
+        args = cli_mod.build_parser().parse_args(["ask", "3", "What", "is", "this?", "--save"])
+        out = io.StringIO()
+        err = io.StringIO()
+        save_path = ROOT / "data" / "papers" / "qa" / "paper_3.jsonl"
+        with (
+            patch("memory.paper_chat.answer_paper_question", return_value="Test answer.") as ask_mock,
+            patch("memory.paper_chat.save_paper_qa_turn", return_value=save_path) as save_mock,
+            patch("utils.paths.project_root", return_value=ROOT),
+            redirect_stdout(out),
+            contextlib.redirect_stderr(err),
+        ):
+            rc = cli_mod.cmd_ask(args)
+        self.assertEqual(rc, 0)
+        ask_mock.assert_called_once_with("3", "What is this?", project_root=ROOT)
+        save_mock.assert_called_once_with("3", "What is this?", "Test answer.", project_root=ROOT)
+        self.assertIn("Saved:", err.getvalue())
+
     def test_cmd_ask_log_prints_saved_turns(self) -> None:
         args = cli_mod.build_parser().parse_args(["ask-log", "3"])
         out = io.StringIO()
@@ -241,6 +294,90 @@ class TestCliCommands(unittest.TestCase):
             rc = cli_mod.cmd_ask_log(args)
         self.assertEqual(rc, 0)
         self.assertIn("No saved ask history for paper_id=3.", out.getvalue())
+
+    def test_cmd_ask_log_tail_prints_recent_turns_only(self) -> None:
+        args = cli_mod.build_parser().parse_args(["ask-log", "3", "--tail", "2"])
+        out = io.StringIO()
+        with (
+            patch(
+                "memory.paper_chat.load_paper_qa_turns",
+                return_value=[
+                    {"timestamp": "2026-04-01T10:00:00+00:00", "question": "Q1", "answer": "A1"},
+                    {"timestamp": "2026-04-01T11:00:00+00:00", "question": "Q2", "answer": "A2"},
+                    {"timestamp": "2026-04-01T12:00:00+00:00", "question": "Q3", "answer": "A3"},
+                ],
+            ),
+            patch("utils.paths.project_root", return_value=ROOT),
+            redirect_stdout(out),
+        ):
+            rc = cli_mod.cmd_ask_log(args)
+        self.assertEqual(rc, 0)
+        text = out.getvalue()
+        self.assertNotIn("Q: Q1", text)
+        self.assertIn("[2] 2026-04-01T11:00:00+00:00", text)
+        self.assertIn("[3] 2026-04-01T12:00:00+00:00", text)
+
+    def test_cmd_ask_log_delete_reports_deleted(self) -> None:
+        args = cli_mod.build_parser().parse_args(["ask-log-delete", "3"])
+        out = io.StringIO()
+        with (
+            patch("memory.paper_chat.delete_paper_qa_turns", return_value=True),
+            patch("utils.paths.project_root", return_value=ROOT),
+            redirect_stdout(out),
+        ):
+            rc = cli_mod.cmd_ask_log_delete(args)
+        self.assertEqual(rc, 0)
+        self.assertIn("Deleted ask history for paper_id=3.", out.getvalue())
+
+    def test_cmd_ask_log_delete_reports_missing(self) -> None:
+        args = cli_mod.build_parser().parse_args(["ask-log-delete", "3"])
+        out = io.StringIO()
+        with (
+            patch("memory.paper_chat.delete_paper_qa_turns", return_value=False),
+            patch("utils.paths.project_root", return_value=ROOT),
+            redirect_stdout(out),
+        ):
+            rc = cli_mod.cmd_ask_log_delete(args)
+        self.assertEqual(rc, 0)
+        self.assertIn("No saved ask history for paper_id=3.", out.getvalue())
+
+    def test_cmd_ask_log_delete_by_index(self) -> None:
+        args = cli_mod.build_parser().parse_args(["ask-log-delete", "3", "--index", "2"])
+        out = io.StringIO()
+        with (
+            patch("memory.paper_chat.delete_paper_qa_turn_by_index", return_value=True) as delete_mock,
+            patch("utils.paths.project_root", return_value=ROOT),
+            redirect_stdout(out),
+        ):
+            rc = cli_mod.cmd_ask_log_delete(args)
+        self.assertEqual(rc, 0)
+        delete_mock.assert_called_once_with("3", 2, project_root=ROOT)
+        self.assertIn("Deleted ask turn #2 for paper_id=3.", out.getvalue())
+
+    def test_cmd_ask_log_delete_by_question(self) -> None:
+        args = cli_mod.build_parser().parse_args(
+            ["ask-log-delete", "3", "--question", "slot attention"]
+        )
+        out = io.StringIO()
+        with (
+            patch("memory.paper_chat.delete_paper_qa_turns_by_question", return_value=2) as delete_mock,
+            patch("utils.paths.project_root", return_value=ROOT),
+            redirect_stdout(out),
+        ):
+            rc = cli_mod.cmd_ask_log_delete(args)
+        self.assertEqual(rc, 0)
+        delete_mock.assert_called_once_with("3", "slot attention", project_root=ROOT)
+        self.assertIn("Deleted 2 ask turn(s) for paper_id=3 matching question text.", out.getvalue())
+
+    def test_cmd_ask_log_delete_rejects_multiple_selectors(self) -> None:
+        args = cli_mod.build_parser().parse_args(
+            ["ask-log-delete", "3", "--index", "2", "--question", "slot attention"]
+        )
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            rc = cli_mod.cmd_ask_log_delete(args)
+        self.assertEqual(rc, 2)
+        self.assertIn("use only one of --index or --question", err.getvalue())
 
 
 if __name__ == "__main__":

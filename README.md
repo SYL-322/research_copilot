@@ -285,6 +285,10 @@ python cli.py ask 1 "What is the main contribution?"
 python cli.py ask 1 "Why does the method work?"
 python cli.py ask 1 --save "What is the main contribution?"
 python cli.py ask-log 1
+python cli.py ask-log 1 --tail 5
+python cli.py ask-log-delete 1
+python cli.py ask-log-delete 1 --index 3
+python cli.py ask-log-delete 1 --question "slot attention"
 ```
 
 This uses stored paper memory plus retrieved text chunks from the same paper.
@@ -296,6 +300,16 @@ If you do not remember the numeric `paper_id`, use `python cli.py papers` or `py
 `data/papers/qa/paper_<paper_id>.jsonl`
 
 Use `python cli.py ask-log <paper_id>` to print the saved local Q&A history for that paper.
+
+Use `python cli.py ask-log <paper_id> --tail N` to print only the most recent `N` saved turns.
+
+Use `python cli.py ask-log-delete <paper_id>` to remove the saved local Q&A history file for that paper.
+
+Use `python cli.py ask-log-delete <paper_id> --index N` to delete one saved turn by its displayed `ask-log` index.
+
+Use `python cli.py ask-log-delete <paper_id> --question "..."` to delete saved turns whose question contains that text, case-insensitively.
+
+`--save` can appear either before or after the question text.
 
 <a id="run-topic-scan"></a>
 ### 6. Run topic scan

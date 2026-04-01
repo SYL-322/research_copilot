@@ -285,6 +285,10 @@ python cli.py ask 1 "What is the main contribution?"
 python cli.py ask 1 "Why does the method work?"
 python cli.py ask 1 --save "What is the main contribution?"
 python cli.py ask-log 1
+python cli.py ask-log 1 --tail 5
+python cli.py ask-log-delete 1
+python cli.py ask-log-delete 1 --index 3
+python cli.py ask-log-delete 1 --question "slot attention"
 ```
 
 这里会使用已存储的 paper memory 和从同一篇论文中检索出的文本 chunks。
@@ -296,6 +300,16 @@ python cli.py ask-log 1
 `data/papers/qa/paper_<paper_id>.jsonl`
 
 可以使用 `python cli.py ask-log <paper_id>` 直接打印这篇论文已保存的本地问答历史。
+
+可以使用 `python cli.py ask-log <paper_id> --tail N` 只看最近 `N` 条已保存问答。
+
+可以使用 `python cli.py ask-log-delete <paper_id>` 删除这篇论文对应的本地问答历史文件。
+
+可以使用 `python cli.py ask-log-delete <paper_id> --index N` 按 `ask-log` 里显示的序号删除某一条问答。
+
+可以使用 `python cli.py ask-log-delete <paper_id> --question "..."` 按问题字符串做大小写不敏感匹配，删除命中的问答。
+
+`--save` 放在问题前后都可以被正确识别。
 
 <a id="run-topic-scan"></a>
 ### 6. 运行 topic scan

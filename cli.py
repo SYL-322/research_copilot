@@ -6,8 +6,12 @@ Run from the repository root:
 
     python cli.py --help
     python cli.py ingest 1706.03762
+    python cli.py ingest 1706.03762 --with-memory
     python cli.py memory 1
     python cli.py ask 1 "What is the main contribution?"
+    python cli.py ask 1 --save "What is the main contribution?"
+    python cli.py ask-log 1 --tail 5
+    python cli.py ask-log-delete 1 --index 2
     python cli.py topic "diffusion models"
     python cli.py digest --days 5 topic_a topic_b
     python cli.py subscribe "my topic"   # optional: for digest without explicit topic args
@@ -148,7 +152,12 @@ def cmd_ask_log(args: argparse.Namespace) -> int:
         if not turns:
             print(f"No saved ask history for paper_id={args.paper_id}.")
             return 0
-        for idx, item in enumerate(turns, 1):
+        total_turns = len(turns)
+        if getattr(args, "tail", None) is not None:
+            tail = max(1, int(args.tail))
+            turns = turns[-tail:]
+        start_idx = total_turns - len(turns) + 1
+        for idx, item in enumerate(turns, start_idx):
             ts = str(item.get("timestamp") or "")
             question = str(item.get("question") or "").strip()
             answer = str(item.get("answer") or "").strip()
@@ -156,6 +165,55 @@ def cmd_ask_log(args: argparse.Namespace) -> int:
             print(f"Q: {question}")
             print(f"A: {answer}")
             print("")
+        return 0
+    except PaperQAError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_ask_log_delete(args: argparse.Namespace) -> int:
+    from memory.paper_chat import (
+        PaperQAError,
+        delete_paper_qa_turn_by_index,
+        delete_paper_qa_turns,
+        delete_paper_qa_turns_by_question,
+    )
+    from utils.paths import project_root
+
+    try:
+        if args.index is not None and args.question is not None:
+            print("Error: use only one of --index or --question.", file=sys.stderr)
+            return 2
+        root = project_root()
+        if args.index is not None:
+            deleted = delete_paper_qa_turn_by_index(
+                args.paper_id,
+                args.index,
+                project_root=root,
+            )
+            if deleted:
+                print(f"Deleted ask turn #{args.index} for paper_id={args.paper_id}.")
+            else:
+                print(f"No saved ask turn #{args.index} for paper_id={args.paper_id}.")
+            return 0
+        if args.question is not None:
+            removed = delete_paper_qa_turns_by_question(
+                args.paper_id,
+                args.question,
+                project_root=root,
+            )
+            if removed > 0:
+                print(
+                    f"Deleted {removed} ask turn(s) for paper_id={args.paper_id} matching question text."
+                )
+            else:
+                print(f"No saved ask history matched that question for paper_id={args.paper_id}.")
+            return 0
+        deleted = delete_paper_qa_turns(args.paper_id, project_root=root)
+        if deleted:
+            print(f"Deleted ask history for paper_id={args.paper_id}.")
+        else:
+            print(f"No saved ask history for paper_id={args.paper_id}.")
         return 0
     except PaperQAError as e:
         print(f"Error: {e}", file=sys.stderr)
@@ -258,7 +316,11 @@ def cmd_subscriptions(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="cli.py",
-        description="Research Copilot — ingest papers, build memory, topic scan, digest (run from repo root).",
+        description=(
+            "Research Copilot CLI — ingest papers, inspect local paper state, "
+            "build memory, ask questions, scan topics, and generate digests "
+            "(run from repo root)."
+        ),
     )
     p.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
 
@@ -277,7 +339,7 @@ def build_parser() -> argparse.ArgumentParser:
     pm.add_argument("paper_id", help="Integer id from papers table (see ingest output)")
     pm.set_defaults(func=cmd_memory)
 
-    pa = sub.add_parser("ask", help="Ask a question (needs memory built first)")
+    pa = sub.add_parser("ask", help="Ask a question about one paper; optional --save appends to local JSONL")
     pa.add_argument("paper_id", help="papers.id")
     pa.add_argument(
         "--save",
@@ -286,14 +348,27 @@ def build_parser() -> argparse.ArgumentParser:
     )
     pa.add_argument(
         "question",
-        nargs=argparse.REMAINDER,
+        nargs="+",
         help="Question text (quote for multiple words)",
     )
     pa.set_defaults(func=cmd_ask)
 
-    pal = sub.add_parser("ask-log", help="Show saved ask history for one paper")
+    pal = sub.add_parser("ask-log", help="Show saved ask history for one paper; optional --tail N")
     pal.add_argument("paper_id", help="papers.id")
+    pal.add_argument("--tail", type=int, help="Show only the most recent N saved turns")
     pal.set_defaults(func=cmd_ask_log)
+
+    pdel = sub.add_parser(
+        "ask-log-delete",
+        help="Delete saved ask history for one paper, one indexed turn, or question-matched turns",
+    )
+    pdel.add_argument("paper_id", help="papers.id")
+    pdel.add_argument("--index", type=int, help="Delete one saved turn by its 1-based ask-log index")
+    pdel.add_argument(
+        "--question",
+        help="Delete saved turns whose question contains this text (case-insensitive)",
+    )
+    pdel.set_defaults(func=cmd_ask_log_delete)
 
     pp = sub.add_parser("papers", help="List locally stored papers")
     pp.add_argument("--limit", type=int, default=50, help="Maximum rows to show")

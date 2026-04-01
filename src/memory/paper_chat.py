@@ -14,7 +14,7 @@ from db.database import initialize_database
 from db.repository import Repository
 from llm.openai_client import OpenAIClient
 from retrieval.paper_retriever import format_evidence_block, retrieve_relevant_chunks
-from utils.files import append_jsonl
+from utils.files import append_jsonl, write_text
 from utils.paths import project_root as default_project_root
 
 logger = logging.getLogger(__name__)
@@ -121,6 +121,78 @@ def load_paper_qa_turns(
         if isinstance(item, dict):
             rows.append(item)
     return rows
+
+
+def delete_paper_qa_turns(
+    paper_id: str,
+    *,
+    settings: Settings | None = None,
+    project_root: Path | None = None,
+) -> bool:
+    """Delete the local JSONL log file for one paper. Returns True if removed."""
+    settings = settings or load_settings()
+    root = project_root or default_project_root()
+    pid = _parse_paper_id(paper_id)
+    path = paper_qa_log_path(pid, project_root=root, settings=settings)
+    if not path.is_file():
+        return False
+    path.unlink()
+    return True
+
+
+def delete_paper_qa_turn_by_index(
+    paper_id: str,
+    index: int,
+    *,
+    settings: Settings | None = None,
+    project_root: Path | None = None,
+) -> bool:
+    """Delete one saved turn by its 1-based display index."""
+    if index < 1:
+        raise PaperQAError(f"index must be positive, got {index}")
+    settings = settings or load_settings()
+    root = project_root or default_project_root()
+    pid = _parse_paper_id(paper_id)
+    path = paper_qa_log_path(pid, project_root=root, settings=settings)
+    rows = load_paper_qa_turns(paper_id, settings=settings, project_root=root)
+    if index > len(rows):
+        return False
+    del rows[index - 1]
+    _rewrite_paper_qa_log(path, rows)
+    return True
+
+
+def delete_paper_qa_turns_by_question(
+    paper_id: str,
+    question_query: str,
+    *,
+    settings: Settings | None = None,
+    project_root: Path | None = None,
+) -> int:
+    """Delete saved turns whose question contains ``question_query`` case-insensitively."""
+    settings = settings or load_settings()
+    root = project_root or default_project_root()
+    pid = _parse_paper_id(paper_id)
+    path = paper_qa_log_path(pid, project_root=root, settings=settings)
+    needle = question_query.strip().casefold()
+    if not needle:
+        raise PaperQAError("question_query is empty.")
+    rows = load_paper_qa_turns(paper_id, settings=settings, project_root=root)
+    kept = [row for row in rows if needle not in str(row.get("question") or "").casefold()]
+    removed = len(rows) - len(kept)
+    if removed > 0:
+        _rewrite_paper_qa_log(path, kept)
+    return removed
+
+
+def _rewrite_paper_qa_log(path: Path, rows: list[dict[str, object]]) -> None:
+    """Rewrite the JSONL log file after in-place deletions; remove file if empty."""
+    if not rows:
+        if path.is_file():
+            path.unlink()
+        return
+    content = "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows)
+    write_text(path, content)
 
 
 def answer_paper_question(
