@@ -51,6 +51,19 @@ class PaperMetadata(BaseModel):
         return []
 
 
+class StoredPaper(BaseModel):
+    """Paper metadata with local memory availability for CLI lookup flows."""
+
+    id: int
+    external_id: str | None = None
+    title: str = ""
+    authors: list[str] = Field(default_factory=list)
+    year: int | None = None
+    venue: str | None = None
+    source: str = "unknown"
+    has_memory: bool = False
+
+
 class GlossaryEntry(BaseModel):
     """Term and definition for paper memory."""
 

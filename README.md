@@ -185,6 +185,7 @@ From arXiv:
 ```bash
 python cli.py ingest 1706.03762
 python cli.py ingest https://arxiv.org/abs/1706.03762
+python cli.py ingest 1706.03762 --with-memory
 ```
 
 From a local PDF:
@@ -194,6 +195,41 @@ python cli.py ingest /path/to/paper.pdf
 ```
 
 This stores metadata in SQLite, writes extracted text to `data/papers/`, and stores overlapping chunks for later retrieval.
+
+By default, `ingest` stays a cheap non-LLM operation. It now prints the `paper_id` plus suggested next commands so you can immediately build memory, ask a question later, or find the paper again from the local store.
+
+If you want the one-shot flow, use:
+
+```bash
+python cli.py ingest 1706.03762 --with-memory
+```
+
+That runs ingest first, then builds structured paper memory as a second step.
+
+### List stored papers
+
+```bash
+python cli.py papers
+python cli.py papers --limit 100
+```
+
+This prints locally stored papers with:
+
+- `paper_id`
+- whether memory has already been built
+- external id (for arXiv papers, the arXiv id)
+- year
+- title
+
+### Search stored papers
+
+```bash
+python cli.py search-papers attention
+python cli.py search-papers transformer
+python cli.py search-papers 1706.03762
+```
+
+This searches local papers by title text, keyword, author text, venue/source text, and external id.
 
 ### Build paper memory
 
@@ -213,6 +249,8 @@ python cli.py ask 1 "Why does the method work?"
 ```
 
 This uses stored paper memory plus retrieved text chunks from the same paper.
+
+If you do not remember the numeric `paper_id`, use `python cli.py papers` or `python cli.py search-papers ...` first.
 
 ### Run topic scan
 
@@ -284,13 +322,59 @@ If the report fails the SQLite persistence quality gate, Markdown and JSON cache
 
 ### Generate a daily digest
 
-Pass explicit topics:
+`digest` is the recent-paper triage workflow. It searches for papers published within a recent time window, groups them by one or more topics, asks the LLM to produce a concise recommendation table, and writes the result to `data/digests/`.
+
+CLI form:
+
+```bash
+python cli.py digest [topics ...] [--days N] [--max-per-topic N]
+```
+
+Arguments:
+
+- `topics`: zero or more topic strings
+- `--days`: publication window in days; default `3`
+- `--max-per-topic`: max retrieved papers per topic before merge and LLM triage; default `15`
+
+Behavior:
+
+- If one or more `topics` are provided, digest runs on exactly those topics.
+- If no `topics` are provided, digest falls back to active subscriptions from SQLite.
+- The command prints the digest Markdown path to stderr and prints `items: <count>` to stdout.
+
+Important distinction:
+
+- `python cli.py subscriptions` shows subscribed digest topics, not papers.
+- `python cli.py digest ...` performs the recent-paper search and generates the paper list in Markdown.
+
+`subscriptions` output columns are:
+
+- column 1: topic slug, such as `animal_dataset`
+- column 2: original topic text, such as `animal dataset`
+- column 3: status, usually `active` or `inactive`
+
+So this:
+
+```bash
+python cli.py subscriptions
+```
+
+means "which topics will be used when I run `digest` without explicit topics?", not "which papers were found already?"
+
+Run digest with explicit topics:
 
 ```bash
 python cli.py digest --days 5 "reasoning models" "retrieval augmented generation"
 ```
 
-Or subscribe topics once and reuse them:
+Equivalent examples:
+
+```bash
+python cli.py digest "animal motion"
+python cli.py digest "animal motion" "4d generation" --days 7 --max-per-topic 20
+```
+
+Or subscribe topics once and reuse them when no topics are passed:
 
 ```bash
 python cli.py subscribe "reasoning models"
@@ -298,6 +382,62 @@ python cli.py subscribe "multimodal agents"
 python cli.py subscriptions
 python cli.py digest --days 3
 ```
+
+Example workflow:
+
+1. Subscribe one or more standing topics:
+
+```bash
+python cli.py subscribe "animal dataset"
+python cli.py subscribe "animal motion"
+```
+
+2. Check which topics are currently active:
+
+```bash
+python cli.py subscriptions
+```
+
+Example output:
+
+```text
+animal_dataset  animal dataset  active
+animal_motion   animal motion   active
+```
+
+This does not mean papers have already been retrieved. It only means those topics are saved as digest inputs.
+
+3. Run digest without passing explicit topics:
+
+```bash
+python cli.py digest --days 3
+```
+
+This uses the active subscriptions above, searches for papers from the last 3 days, and writes a digest Markdown file under `data/digests/`.
+
+4. Open the generated digest Markdown to see the actual paper recommendations.
+
+If you want to bypass subscriptions and search directly, pass topics explicitly:
+
+```bash
+python cli.py digest --days 3 "animal dataset"
+python cli.py digest --days 7 "animal dataset" "animal motion"
+```
+
+What digest does internally:
+
+- searches recent papers for each topic
+- merges and deduplicates overlapping results across topics
+- sends candidate metadata to the digest prompt
+- writes a Markdown digest under `data/digests/`
+
+What digest is not:
+
+- not a topic survey like `python cli.py topic ...`
+- not a full-paper review
+- not based on local paper memory by default
+
+Use it as a lightweight filter for new papers worth reading next.
 
 ## Design Philosophy
 

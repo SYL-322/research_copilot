@@ -7,7 +7,7 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any
 
-from core.models import PaperChunk, PaperMemory, PaperMetadata, Subscription
+from core.models import PaperChunk, PaperMemory, PaperMetadata, StoredPaper, Subscription
 from db.database import init_schema as apply_schema
 
 
@@ -37,6 +37,20 @@ def _row_to_paper_metadata(row: sqlite3.Row) -> PaperMetadata:
         source_url=row["source_url"],
         pdf_path=row["pdf_path"],
         text_path=row["text_path"],
+    )
+
+
+def _row_to_stored_paper(row: sqlite3.Row) -> StoredPaper:
+    authors = json.loads(row["authors_json"] or "[]")
+    return StoredPaper(
+        id=int(row["id"]),
+        external_id=row["external_id"],
+        title=row["title"] or "",
+        authors=authors if isinstance(authors, list) else [],
+        year=row["year"],
+        venue=row["venue"],
+        source=row["source"] or "unknown",
+        has_memory=bool(row["has_memory"]),
     )
 
 
@@ -81,6 +95,59 @@ class Repository:
             (lim,),
         ).fetchall()
         return [_row_to_paper_metadata(r) for r in rows]
+
+    def list_stored_papers(self, *, limit: int = 200) -> list[StoredPaper]:
+        """Return locally stored papers with memory availability (newest first)."""
+        lim = max(1, min(int(limit), 10_000))
+        rows = self._conn.execute(
+            """
+            SELECT
+                p.*,
+                CASE WHEN pm.paper_id IS NULL THEN 0 ELSE 1 END AS has_memory
+            FROM papers p
+            LEFT JOIN paper_memories pm ON pm.paper_id = p.id
+            ORDER BY p.id DESC
+            LIMIT ?
+            """,
+            (lim,),
+        ).fetchall()
+        return [_row_to_stored_paper(r) for r in rows]
+
+    def search_stored_papers(self, query: str, *, limit: int = 25) -> list[StoredPaper]:
+        """Search stored papers by external id, title, venue, source, or author text."""
+        q = str(query).strip().lower()
+        if not q:
+            return []
+        lim = max(1, min(int(limit), 10_000))
+        contains = f"%{q}%"
+        title_prefix = f"{q}%"
+        rows = self._conn.execute(
+            """
+            SELECT
+                p.*,
+                CASE WHEN pm.paper_id IS NULL THEN 0 ELSE 1 END AS has_memory
+            FROM papers p
+            LEFT JOIN paper_memories pm ON pm.paper_id = p.id
+            WHERE
+                LOWER(COALESCE(p.external_id, '')) = ?
+                OR LOWER(COALESCE(p.external_id, '')) LIKE ?
+                OR LOWER(COALESCE(p.title, '')) LIKE ?
+                OR LOWER(COALESCE(p.authors_json, '')) LIKE ?
+                OR LOWER(COALESCE(p.venue, '')) LIKE ?
+                OR LOWER(COALESCE(p.source, '')) LIKE ?
+            ORDER BY
+                CASE
+                    WHEN LOWER(COALESCE(p.external_id, '')) = ? THEN 0
+                    WHEN LOWER(COALESCE(p.title, '')) LIKE ? THEN 1
+                    WHEN LOWER(COALESCE(p.external_id, '')) LIKE ? THEN 2
+                    ELSE 3
+                END,
+                p.id DESC
+            LIMIT ?
+            """,
+            (q, contains, contains, contains, contains, contains, q, title_prefix, contains, lim),
+        ).fetchall()
+        return [_row_to_stored_paper(r) for r in rows]
 
     def list_paper_ids_with_memories(self) -> list[int]:
         """Return ``papers.id`` for rows that have a ``paper_memories`` row (newest id first)."""
