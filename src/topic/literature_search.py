@@ -599,8 +599,26 @@ def _passes_topic_relevance_gate(topic: str, candidate: CandidatePaper) -> bool:
     return False
 
 
-def _rank_and_filter_candidates(topic: str, candidates: list[CandidatePaper]) -> list[CandidatePaper]:
-    """Apply transparent topic relevance scoring before the existing tie-breakers."""
+def _rank_and_filter_candidates(
+    topic: str,
+    candidates: list[CandidatePaper],
+    *,
+    fallback_to_unfiltered: bool = True,
+) -> list[CandidatePaper]:
+    """Apply transparent topic relevance scoring before the existing tie-breakers.
+
+    Parameters
+    ----------
+    topic
+        Topic string used for lexical scoring / gating.
+    candidates
+        Merged provider candidates.
+    fallback_to_unfiltered
+        When True, preserve the historical topic-scan behavior of returning the
+        unfiltered candidate list if nothing passes the relevance gate. Digest
+        uses ``False`` so obviously off-topic papers do not re-enter purely due
+        to recency.
+    """
     scored: list[CandidatePaper] = []
     filtered_out: list[CandidatePaper] = []
 
@@ -634,7 +652,31 @@ def _rank_and_filter_candidates(topic: str, candidates: list[CandidatePaper]) ->
             ),
         )
         return ranked
-    return sorted(candidates, key=_candidate_sort_key, reverse=True)
+    if fallback_to_unfiltered:
+        return sorted(candidates, key=_candidate_sort_key, reverse=True)
+    return []
+
+
+def rank_and_filter_topic_candidates(
+    topic: str,
+    candidates: list[CandidatePaper],
+    *,
+    fallback_to_unfiltered: bool = True,
+) -> list[CandidatePaper]:
+    """Public wrapper for transparent lexical relevance ranking.
+
+    Digest reuses the same lightweight title/abstract relevance logic as topic
+    scan so candidate retention depends on topical fit before downstream LLM
+    synthesis. ``fallback_to_unfiltered`` exists because topic scan prefers
+    degraded recall over empty results, while digest should drop clearly weak
+    matches instead of surfacing them as "recent".
+    """
+    normalized = _normalize_topic_query(topic)
+    return _rank_and_filter_candidates(
+        normalized,
+        candidates,
+        fallback_to_unfiltered=fallback_to_unfiltered,
+    )
 
 
 def _arxiv_id_from_entry_id(text: str) -> str | None:

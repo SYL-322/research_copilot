@@ -1,4 +1,4 @@
-"""Find recent papers for digest topics (date filter + cross-topic deduplication)."""
+"""Find recent papers for digest topics (relevance gate + date filter + deduplication)."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from core.config import Settings
 from topic.literature_search import (
     CandidatePaper,
     dedupe_candidates,
+    rank_and_filter_topic_candidates,
     search_arxiv,
     search_semantic_scholar,
 )
@@ -54,6 +55,12 @@ def _sort_key_newest(p: CandidatePaper) -> tuple[date, str]:
     return (d, p.title)
 
 
+def _sort_key_recent_relevant(p: CandidatePaper) -> tuple[date, float, str]:
+    """Digest ordering: recency first, then topic relevance among recent survivors."""
+    d = parse_publication_date(p) or date.min
+    return (d, p.topic_relevance_score, p.title)
+
+
 def find_recent_for_topic(
     topic: str,
     *,
@@ -63,8 +70,9 @@ def find_recent_for_topic(
     fetch_cap: int = 80,
 ) -> list[CandidatePaper]:
     """
-    Search arXiv + Semantic Scholar for ``topic``, keep papers whose publication
-    date is within the last ``days_back`` days (UTC calendar), newest first.
+    Search arXiv + Semantic Scholar for ``topic``, apply the lightweight topic
+    relevance gate used by topic scan, then keep papers whose publication date
+    is within the last ``days_back`` days (UTC calendar).
 
     Fetches up to ``fetch_cap`` per source before filtering (APIs do not always
     expose tight date filters).
@@ -85,15 +93,21 @@ def find_recent_for_topic(
         api_key=settings.semantic_scholar_api_key,
     )
     merged = dedupe_candidates(arx + ss)
-    recent = [p for p in merged if _is_within_window(p, cutoff)]
-    recent.sort(key=_sort_key_newest, reverse=True)
+    ranked = rank_and_filter_topic_candidates(
+        t,
+        merged,
+        fallback_to_unfiltered=False,
+    )
+    recent = [p for p in ranked if _is_within_window(p, cutoff)]
+    recent.sort(key=_sort_key_recent_relevant, reverse=True)
     out = recent[:max_per_topic]
     logger.info(
-        "Topic %r: %d recent papers within %d days (from %d candidates)",
+        "Topic %r: %d recent relevant papers within %d days (from %d merged candidates, %d after relevance gate)",
         t[:60],
         len(out),
         days_back,
         len(merged),
+        len(ranked),
     )
     return out
 

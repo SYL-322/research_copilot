@@ -1,5 +1,7 @@
 # Research Copilot
 
+English | [简体中文](./README.zh-CN.md)
+
 `research_copilot` is a local-first research assistant for working with academic papers from the command line.
 
 It is built for a practical workflow:
@@ -13,6 +15,28 @@ It is built for a practical workflow:
 
 The project is intentionally lightweight. It uses Python, SQLite, local files under `data/`, and direct OpenAI API calls. It does not use LangChain, a vector database, or a large orchestration framework.
 
+## Table of Contents
+
+- [What This Project Is](#what-this-project-is)
+- [Key Components](#key-components)
+- [How It Works](#how-it-works)
+- [Setup](#setup)
+- [How To Use](#how-to-use)
+  - [Ingest a paper](#ingest-a-paper)
+  - [List stored papers](#list-stored-papers)
+  - [Search stored papers](#search-stored-papers)
+  - [Build paper memory](#build-paper-memory)
+  - [Ask questions about a paper](#ask-questions-about-a-paper)
+  - [Run topic scan](#run-topic-scan)
+  - [Generate a daily digest](#generate-a-daily-digest)
+- [Topic Report Output](#topic-report-output)
+- [Design Philosophy](#design-philosophy)
+- [Limitations](#limitations)
+- [Cost Considerations](#cost-considerations)
+- [Future Improvements](#future-improvements)
+- [Tests](#tests)
+
+<a id="what-this-project-is"></a>
 ## What This Project Is
 
 This system is designed to help with two related research problems:
@@ -28,6 +52,7 @@ The project separates these concerns:
 
 It is best thought of as a local research workbench, not as an autonomous research agent.
 
+<a id="key-components"></a>
 ## Key Components
 
 ### Paper memory
@@ -101,6 +126,7 @@ The project distinguishes between:
 
 Paper memory and paper QA use the main model directly. Topic scan routes between light and main models. This is the main built-in quality/cost control mechanism.
 
+<a id="how-it-works"></a>
 ## How It Works
 
 ### System overview
@@ -144,6 +170,7 @@ The main SQLite tables are:
 
 The schema is deliberately simple so the local data remains inspectable and portable.
 
+<a id="setup"></a>
 ## Setup
 
 ```bash
@@ -170,6 +197,7 @@ Optional configuration:
 - `HTTP_TIMEOUT`
 - `LOG_LEVEL`
 
+<a id="how-to-use"></a>
 ## How To Use
 
 The primary interface is the CLI:
@@ -178,6 +206,7 @@ The primary interface is the CLI:
 python cli.py --help
 ```
 
+<a id="ingest-a-paper"></a>
 ### Ingest a paper
 
 From arXiv:
@@ -206,6 +235,7 @@ python cli.py ingest 1706.03762 --with-memory
 
 That runs ingest first, then builds structured paper memory as a second step.
 
+<a id="list-stored-papers"></a>
 ### List stored papers
 
 ```bash
@@ -221,6 +251,7 @@ This prints locally stored papers with:
 - year
 - title
 
+<a id="search-stored-papers"></a>
 ### Search stored papers
 
 ```bash
@@ -231,6 +262,7 @@ python cli.py search-papers 1706.03762
 
 This searches local papers by title text, keyword, author text, venue/source text, and external id.
 
+<a id="build-paper-memory"></a>
 ### Build paper memory
 
 ```bash
@@ -241,6 +273,7 @@ python cli.py memory 1
 
 This runs the paper-memory prompt over the ingested paper text and stores the resulting JSON in both SQLite and `data/cache/`.
 
+<a id="ask-questions-about-a-paper"></a>
 ### Ask questions about a paper
 
 ```bash
@@ -252,6 +285,7 @@ This uses stored paper memory plus retrieved text chunks from the same paper.
 
 If you do not remember the numeric `paper_id`, use `python cli.py papers` or `python cli.py search-papers ...` first.
 
+<a id="run-topic-scan"></a>
 ### Run topic scan
 
 ```bash
@@ -284,6 +318,7 @@ python cli.py topic "4d object reconstruction / generation" --max-papers 20 --fo
 
 `--force` bypasses the topic JSON cache for that `(topic, max_papers)` pair and reruns retrieval plus LLM synthesis. Without `--force`, the CLI reuses the cached topic report when the cache version, topic string, and `--max-papers` value match.
 
+<a id="topic-report-output"></a>
 ## Topic Report Output
 
 Each topic scan writes:
@@ -320,6 +355,7 @@ If the report fails the SQLite persistence quality gate, Markdown and JSON cache
 - If both providers effectively fail and the failure is due to rate limiting, topic scan raises a rate-limit error.
 - Semantic Scholar throttling is still preserved internally; adding `SEMANTIC_SCHOLAR_API_KEY` improves quota and reduces degraded-mode scans.
 
+<a id="generate-a-daily-digest"></a>
 ### Generate a daily digest
 
 `digest` is the recent-paper triage workflow. It searches for papers published within a recent time window, groups them by one or more topics, asks the LLM to produce a concise recommendation table, and writes the result to `data/digests/`.
@@ -439,6 +475,7 @@ What digest is not:
 
 Use it as a lightweight filter for new papers worth reading next.
 
+<a id="design-philosophy"></a>
 ## Design Philosophy
 
 ### Local-first
@@ -493,6 +530,7 @@ The system is built around a simple cost strategy:
 - keep retrieval local and lexical
 - avoid extra infrastructure such as vector services
 
+<a id="limitations"></a>
 ## Limitations
 
 These limitations matter for real research use:
@@ -533,6 +571,7 @@ By default, digest generation uses `OPENAI_MODEL_LIGHT` when configured, falling
 
 If PDF extraction is poor, the downstream memory and QA quality will degrade accordingly.
 
+<a id="cost-considerations"></a>
 ## Cost Considerations
 
 The main knobs are:
@@ -550,6 +589,7 @@ Practical guidance:
 - keep `--max-papers` moderate unless the topic is broad
 - use digest as a filter, not as a substitute for reading papers
 
+<a id="future-improvements"></a>
 ## Future Improvements
 
 - stronger retrieval for paper QA and topic-memory matching
@@ -558,6 +598,7 @@ Practical guidance:
 - more explicit confidence fields in topic reports
 - better handling of poor PDF extraction and incomplete metadata
 
+<a id="tests"></a>
 ## Tests
 
 ```bash

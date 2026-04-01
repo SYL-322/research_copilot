@@ -1,6 +1,11 @@
 """Topic literature search and synthesized reports."""
 
-from topic.literature_search import CandidatePaper, dedupe_candidates, search_literature
+from topic.literature_search import (
+    CandidatePaper,
+    dedupe_candidates,
+    rank_and_filter_topic_candidates,
+    search_literature,
+)
 from topic.search import PaperHit, search_topic
 from topic.topic_analyzer import TopicAnalysisError, render_topic_report_markdown
 from topic.topic_service import TopicScanError, build_topic_report, topic_slug
@@ -14,6 +19,7 @@ __all__ = [
     "build_topic_report",
     "dedupe_candidates",
     "generate_topic_report",
+    "rank_and_filter_topic_candidates",
     "render_topic_report_markdown",
     "search_literature",
     "search_topic",
