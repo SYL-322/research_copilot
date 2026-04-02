@@ -16,7 +16,11 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from core.models import DailyDigestLlmOutput
 from digest.digest_builder import build_daily_digest
-from digest.recent_paper_finder import collect_recent_across_topics, find_recent_for_topic
+from digest.recent_paper_finder import (
+    _query_budget_for_digest_variant,
+    collect_recent_across_topics,
+    find_recent_for_topic,
+)
 from topic.literature_search import CandidatePaper, expand_topic_queries
 
 
@@ -164,6 +168,14 @@ class TestDigestRetrieval(unittest.TestCase):
     def test_expand_topic_queries_adds_close_atomic_variant_for_articulation(self) -> None:
         variants = expand_topic_queries("rigging / articulation")
         self.assertIn("articulated", variants)
+
+    def test_digest_query_budget_uses_layered_limits(self) -> None:
+        topic = "rigging / articulation"
+        self.assertEqual(_query_budget_for_digest_variant(topic, "rigging / articulation"), 25)
+        self.assertEqual(_query_budget_for_digest_variant(topic, "rigging articulation"), 20)
+        self.assertEqual(_query_budget_for_digest_variant(topic, "rigging"), 12)
+        self.assertEqual(_query_budget_for_digest_variant(topic, "articulation"), 12)
+        self.assertEqual(_query_budget_for_digest_variant(topic, "articulated"), 8)
 
     def test_collect_recent_across_topics_keeps_provenance_not_relevance_label(self) -> None:
         paper = _paper(

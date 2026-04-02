@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import math
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from typing import Iterable
@@ -63,6 +62,27 @@ def _sort_key_recent_relevant(p: CandidatePaper) -> tuple[date, float, str]:
     return (d, p.topic_relevance_score, p.title)
 
 
+def _query_budget_for_digest_variant(topic: str, query: str) -> int:
+    """Assign a small per-variant fetch budget based on query specificity.
+
+    Digest query expansion variants are not equally valuable. The original topic
+    string and closely related multi-word combined forms are strongest, plain
+    atomic terms are weaker recall helpers, and morphology-derived single-word
+    expansions are the weakest. A fixed layered budget works better here than
+    dividing one budget equally across all variants, which penalizes more
+    expressive topics.
+    """
+    topic_norm = " ".join(topic.strip().lower().split())
+    query_norm = " ".join(query.strip().lower().split())
+    if query_norm == topic_norm:
+        return 25
+    if " " in query_norm:
+        return 20
+    if query_norm.endswith("ed"):
+        return 8
+    return 12
+
+
 def _search_digest_topic_variants(
     topic: str,
     *,
@@ -77,12 +97,10 @@ def _search_digest_topic_variants(
     """
     query_variants = expand_topic_queries(topic) or [topic]
     timeout = settings.http_timeout
-    # Use the full fetch budget across variants for each provider. This keeps
-    # multi-variant digest queries from truncating plausible hits too early.
-    per_query_limit = min(25, max(8, math.ceil(fetch_cap / max(1, len(query_variants)))))
 
     out: list[CandidatePaper] = []
     for query in query_variants:
+        per_query_limit = min(fetch_cap, _query_budget_for_digest_variant(topic, query))
         out.extend(search_arxiv(query, max_results=per_query_limit, timeout=timeout))
         out.extend(
             search_semantic_scholar(
