@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from core.models import DailyDigestLlmOutput
 from digest.digest_builder import build_daily_digest
+from digest.digest_builder import _digest_file_stem
 from digest.recent_paper_finder import (
     _query_budget_for_digest_variant,
     collect_recent_across_topics,
@@ -255,6 +256,25 @@ class TestDigestRetrieval(unittest.TestCase):
         self.assertEqual(collect_mock.call_args.args[0], ["animal dataset"])
         self.assertEqual(len(digest.items), 1)
         self.assertEqual(digest.items[0].matched_topics, ["animal dataset"])
+
+    def test_digest_file_stem_includes_days_and_topic_label(self) -> None:
+        stem = _digest_file_stem(
+            ["rigging / articulation", "animal motion"],
+            days_back=60,
+            used_subscriptions=False,
+        )
+        self.assertRegex(
+            stem,
+            r"^digest_\d{8}_60d_rigging_articulation_animal_motion_[0-9a-f]{12}$",
+        )
+
+    def test_digest_file_stem_uses_subscribe_label_for_subscription_runs(self) -> None:
+        stem = _digest_file_stem(
+            ["animal dataset"],
+            days_back=7,
+            used_subscriptions=True,
+        )
+        self.assertRegex(stem, r"^digest_\d{8}_7d_subscribe_[0-9a-f]{12}$")
 
 
 if __name__ == "__main__":

@@ -405,6 +405,8 @@ Behavior:
 - If one or more `topics` are provided, digest runs on exactly those topics.
 - If no `topics` are provided, digest falls back to active subscriptions from SQLite.
 - The command prints the digest Markdown path to stderr and prints `items: <count>` to stdout.
+- Digest filenames now include the UTC date, `days` window, and a short topic label.
+- If no explicit topics are passed, the filename label is `subscribe`.
 
 Important distinction:
 
@@ -495,7 +497,7 @@ What digest does internally:
 - applies a lightweight lexical topic relevance filter before final recency retention
 - merges and deduplicates overlapping results across topics
 - sends candidate metadata to the digest prompt
-- writes a Markdown digest under `data/digests/`
+- writes a Markdown digest under `data/digests/`, with filenames like `digest_20260402_7d_animal_dataset_<hash>.md` or `digest_20260402_7d_subscribe_<hash>.md`
 
 If you pass `--debug-candidates`, digest also writes a sibling debug file such as:
 

@@ -405,6 +405,8 @@ python cli.py digest [topics ...] [--days N] [--max-per-topic N] [--debug-candid
 - 如果显式传入一个或多个 `topics`，digest 只会对这些 topics 运行。
 - 如果没有传入 `topics`，digest 会回退到 SQLite 中的 active subscriptions。
 - 命令会把 digest Markdown 路径打印到 stderr，并把 `items: <count>` 打印到 stdout。
+- digest 文件名现在会包含 UTC 日期、`days` 窗口和简短 topic 标签。
+- 如果没有显式传 topic，文件名标签会写成 `subscribe`。
 
 重要区别：
 
@@ -495,7 +497,7 @@ Digest 内部会做的事情：
 - 在最终按时间窗口保留前，先做一层轻量 lexical topic relevance 过滤
 - 对跨 topic 重叠结果做合并和去重
 - 把候选元数据送入 digest prompt
-- 在 `data/digests/` 下写出 Markdown digest
+- 在 `data/digests/` 下写出 Markdown digest，例如 `digest_20260402_7d_animal_dataset_<hash>.md` 或 `digest_20260402_7d_subscribe_<hash>.md`
 
 如果你传入 `--debug-candidates`，digest 还会额外写出一个同目录的 debug 文件，例如：
 

@@ -19,6 +19,7 @@ from digest.recent_paper_finder import (
     collect_recent_across_topics_with_debug,
 )
 from topic.literature_search import CandidatePaper
+from topic.topic_service import topic_slug
 from utils.text_normalize import normalize_title
 from digest.subscription_service import list_subscriptions
 from llm.openai_client import OpenAIClient, strip_json_fences
@@ -241,10 +242,24 @@ def render_digest_markdown(digest: DailyDigest) -> str:
     return "\n".join(lines).strip() + "\n"
 
 
-def _digest_file_stem(topics: list[str]) -> str:
+def _digest_topic_label(topics: list[str], *, used_subscriptions: bool) -> str:
+    if used_subscriptions:
+        return "subscribe"
+    cleaned = [t.strip() for t in topics if t.strip()]
+    if not cleaned:
+        return "subscribe"
+    slugs = [topic_slug(t) for t in cleaned[:2]]
+    label = "_".join(s for s in slugs if s)
+    if len(cleaned) > 2:
+        label += f"_plus{len(cleaned) - 2}"
+    return label or "subscribe"
+
+
+def _digest_file_stem(topics: list[str], *, days_back: int, used_subscriptions: bool) -> str:
     raw = "|".join(sorted(t.strip().lower() for t in topics if t.strip()))
     h = hashlib.sha256(raw.encode()).hexdigest()[:12]
-    return f"digest_{datetime.now(timezone.utc).strftime('%Y%m%d')}_{h}"
+    label = _digest_topic_label(topics, used_subscriptions=used_subscriptions)
+    return f"digest_{datetime.now(timezone.utc).strftime('%Y%m%d')}_{days_back}d_{label}_{h}"
 
 
 def _candidate_debug_row(paper: CandidatePaper) -> dict[str, object]:
@@ -303,9 +318,11 @@ def build_daily_digest(
         raise DigestBuildError("OPENAI_API_KEY is not set.")
 
     topic_list: list[str] = []
+    used_subscriptions = False
     if topics:
         topic_list = [t.strip() for t in topics if t.strip()]
     else:
+        used_subscriptions = True
         subs = list_subscriptions(active_only=True, settings=settings, project_root=root)
         topic_list = [s.topic for s in subs]
 
@@ -340,7 +357,7 @@ def build_daily_digest(
             items=[],
             subscription_id=None,
         )
-        stem = _digest_file_stem(topic_list)
+        stem = _digest_file_stem(topic_list, days_back=days_back, used_subscriptions=used_subscriptions)
         data_dir = settings.resolve_data_dir(root)
         dig_dir = data_dir / "digests"
         dig_dir.mkdir(parents=True, exist_ok=True)
@@ -388,7 +405,7 @@ def build_daily_digest(
         subscription_id=None,
     )
 
-    stem = _digest_file_stem(topic_list)
+    stem = _digest_file_stem(topic_list, days_back=days_back, used_subscriptions=used_subscriptions)
     data_dir = settings.resolve_data_dir(root)
     dig_dir = data_dir / "digests"
     dig_dir.mkdir(parents=True, exist_ok=True)
