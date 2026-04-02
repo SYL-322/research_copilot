@@ -279,7 +279,11 @@ def cmd_digest(args: argparse.Namespace) -> int:
             days_back=args.days,
             max_per_topic=args.max_per_topic,
             project_root=project_root(),
+            debug_candidates=getattr(args, "debug_candidates", False),
         )
+        if getattr(args, "debug_candidates", False) and d.digest_json_path:
+            debug_path = str(Path(d.digest_json_path).with_name(Path(d.digest_json_path).stem + "_debug.json"))
+            print(debug_path, file=sys.stderr)
         print(d.digest_md_path or "", file=sys.stderr)
         print("items:", len(d.items))
         return 0
@@ -404,6 +408,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=15,
         dest="max_per_topic",
         help="Cap papers per topic before merge",
+    )
+    pd.add_argument(
+        "--debug-candidates",
+        action="store_true",
+        dest="debug_candidates",
+        help="Also write a debug JSON with candidates before/after relevance and recency filtering",
     )
     pd.set_defaults(func=cmd_digest)
 

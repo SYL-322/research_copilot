@@ -390,6 +390,7 @@ CLI form:
 
 ```bash
 python cli.py digest [topics ...] [--days N] [--max-per-topic N]
+python cli.py digest [topics ...] [--days N] [--max-per-topic N] [--debug-candidates]
 ```
 
 Arguments:
@@ -397,6 +398,7 @@ Arguments:
 - `topics`: zero or more topic strings
 - `--days`: publication window in days; default `3`
 - `--max-per-topic`: max retrieved papers per topic before merge and LLM triage; default `15`
+- `--debug-candidates`: also write a debug JSON showing candidates before/after relevance and recency filtering
 
 Behavior:
 
@@ -494,6 +496,18 @@ What digest does internally:
 - merges and deduplicates overlapping results across topics
 - sends candidate metadata to the digest prompt
 - writes a Markdown digest under `data/digests/`
+
+If you pass `--debug-candidates`, digest also writes a sibling debug file such as:
+
+- `data/digests/digest_<stem>_debug.json`
+
+This debug JSON includes, per topic:
+
+- query variants used for retrieval
+- merged candidates before relevance filtering
+- candidates after relevance filtering
+- candidates after recency filtering
+- final retained candidates before LLM synthesis
 
 What digest is not:
 

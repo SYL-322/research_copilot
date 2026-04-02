@@ -12,7 +12,12 @@ from core.config import Settings, load_settings
 from core.models import DailyDigest, DailyDigestItem, DailyDigestLlmOutput, DigestItemLlm, DigestRecommendation
 from db.database import initialize_database
 from db.repository import Repository
-from digest.recent_paper_finder import TopicPaperBatch, collect_recent_across_topics
+from digest.recent_paper_finder import (
+    TopicPaperBatch,
+    TopicRecentDebug,
+    collect_recent_across_topics,
+    collect_recent_across_topics_with_debug,
+)
 from topic.literature_search import CandidatePaper
 from utils.text_normalize import normalize_title
 from digest.subscription_service import list_subscriptions
@@ -242,6 +247,29 @@ def _digest_file_stem(topics: list[str]) -> str:
     return f"digest_{datetime.now(timezone.utc).strftime('%Y%m%d')}_{h}"
 
 
+def _candidate_debug_row(paper: CandidatePaper) -> dict[str, object]:
+    row = paper.as_prompt_dict()
+    row["topic_relevance_score"] = paper.topic_relevance_score
+    row["topic_relevance_reasons"] = list(paper.topic_relevance_reasons)
+    return row
+
+
+def _topic_debug_payload(rows: list[TopicRecentDebug]) -> dict[str, object]:
+    return {
+        "topics": [
+            {
+                "topic": row.topic,
+                "query_variants": list(row.query_variants),
+                "merged_candidates": [_candidate_debug_row(p) for p in row.merged_candidates],
+                "relevance_candidates": [_candidate_debug_row(p) for p in row.relevance_candidates],
+                "recent_candidates": [_candidate_debug_row(p) for p in row.recent_candidates],
+                "final_candidates": [_candidate_debug_row(p) for p in row.final_candidates],
+            }
+            for row in rows
+        ]
+    }
+
+
 def build_daily_digest(
     topics: list[str] | None = None,
     days_back: int = 3,
@@ -250,6 +278,7 @@ def build_daily_digest(
     model: str | None = None,
     settings: Settings | None = None,
     project_root: Path | None = None,
+    debug_candidates: bool = False,
 ) -> DailyDigest:
     """
     Build a digest for the given topic strings (or all active subscriptions if ``topics`` is empty).
@@ -283,12 +312,21 @@ def build_daily_digest(
     if not topic_list:
         raise DigestBuildError("No topics: pass `topics` or add subscriptions via subscribe().")
 
-    batches = collect_recent_across_topics(
-        topic_list,
-        days_back=days_back,
-        max_per_topic=max_per_topic,
-        settings=settings,
-    )
+    debug_rows: list[TopicRecentDebug] = []
+    if debug_candidates:
+        batches, debug_rows = collect_recent_across_topics_with_debug(
+            topic_list,
+            days_back=days_back,
+            max_per_topic=max_per_topic,
+            settings=settings,
+        )
+    else:
+        batches = collect_recent_across_topics(
+            topic_list,
+            days_back=days_back,
+            max_per_topic=max_per_topic,
+            settings=settings,
+        )
 
     run_at = datetime.now(timezone.utc).replace(microsecond=0)
     title = f"Recent papers ({days_back}d): " + ", ".join(topic_list[:4])
@@ -308,8 +346,11 @@ def build_daily_digest(
         dig_dir.mkdir(parents=True, exist_ok=True)
         md_path = dig_dir / f"{stem}.md"
         json_path = dig_dir / f"{stem}.json"
+        debug_path = dig_dir / f"{stem}_debug.json"
         write_text(md_path, render_digest_markdown(digest))
         write_text(json_path, json.dumps(digest.model_dump(mode="json"), indent=2, ensure_ascii=False) + "\n")
+        if debug_candidates:
+            write_text(debug_path, json.dumps(_topic_debug_payload(debug_rows), indent=2, ensure_ascii=False) + "\n")
         digest = digest.model_copy(
             update={
                 "digest_md_path": str(md_path.resolve()),
@@ -353,11 +394,14 @@ def build_daily_digest(
     dig_dir.mkdir(parents=True, exist_ok=True)
     md_path = dig_dir / f"{stem}.md"
     json_path = dig_dir / f"{stem}.json"
+    debug_path = dig_dir / f"{stem}_debug.json"
     write_text(md_path, render_digest_markdown(digest))
     write_text(
         json_path,
         json.dumps(digest.model_dump(mode="json"), indent=2, ensure_ascii=False) + "\n",
     )
+    if debug_candidates:
+        write_text(debug_path, json.dumps(_topic_debug_payload(debug_rows), indent=2, ensure_ascii=False) + "\n")
     digest = digest.model_copy(
         update={
             "digest_md_path": str(md_path.resolve()),

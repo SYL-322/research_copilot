@@ -390,6 +390,7 @@ CLI 形式：
 
 ```bash
 python cli.py digest [topics ...] [--days N] [--max-per-topic N]
+python cli.py digest [topics ...] [--days N] [--max-per-topic N] [--debug-candidates]
 ```
 
 参数：
@@ -397,6 +398,7 @@ python cli.py digest [topics ...] [--days N] [--max-per-topic N]
 - `topics`：0 个或多个 topic 字符串
 - `--days`：回看最近多少天，默认 `3`
 - `--max-per-topic`：每个 topic 在合并和 LLM 分诊前最多保留多少篇候选，默认 `15`
+- `--debug-candidates`：额外写出一份 debug JSON，展示 relevance 和 recency 过滤前后的候选列表
 
 行为：
 
@@ -494,6 +496,18 @@ Digest 内部会做的事情：
 - 对跨 topic 重叠结果做合并和去重
 - 把候选元数据送入 digest prompt
 - 在 `data/digests/` 下写出 Markdown digest
+
+如果你传入 `--debug-candidates`，digest 还会额外写出一个同目录的 debug 文件，例如：
+
+- `data/digests/digest_<stem>_debug.json`
+
+这份 debug JSON 会按 topic 保存：
+
+- 实际使用的 query variants
+- relevance 过滤前的 merged candidates
+- relevance 过滤后的 candidates
+- recency 过滤后的 candidates
+- 送入 LLM 之前最终保留的 candidates
 
 Digest 不是什么：
 

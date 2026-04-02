@@ -17,7 +17,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from core.models import DailyDigestLlmOutput
 from digest.digest_builder import build_daily_digest
 from digest.recent_paper_finder import collect_recent_across_topics, find_recent_for_topic
-from topic.literature_search import CandidatePaper
+from topic.literature_search import CandidatePaper, expand_topic_queries
 
 
 def _paper(
@@ -135,7 +135,35 @@ class TestDigestRetrieval(unittest.TestCase):
         self.assertIn("rigging / articulation", arxiv_queries)
         self.assertIn("rigging", arxiv_queries)
         self.assertIn("articulation", arxiv_queries)
+        self.assertIn("articulated", arxiv_queries)
         self.assertEqual(arxiv_queries, ss_queries)
+
+    def test_articulation_topic_keeps_articulated_reconstruction_paper(self) -> None:
+        candidates = [
+            _paper(
+                "MonoArt: Progressive Structural Reasoning for Monocular Articulated 3D Reconstruction",
+                abstract="Monocular articulated 3D reconstruction with structural reasoning.",
+                arxiv_id="2603.19231",
+            )
+        ]
+        with (
+            patch("digest.recent_paper_finder.search_arxiv", return_value=candidates),
+            patch("digest.recent_paper_finder.search_semantic_scholar", return_value=[]),
+        ):
+            out = find_recent_for_topic(
+                "rigging / articulation",
+                days_back=60,
+                max_per_topic=10,
+                settings=self.settings,
+                fetch_cap=12,
+            )
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0].arxiv_id, "2603.19231")
+        self.assertGreater(out[0].topic_relevance_score, 0.0)
+
+    def test_expand_topic_queries_adds_close_atomic_variant_for_articulation(self) -> None:
+        variants = expand_topic_queries("rigging / articulation")
+        self.assertIn("articulated", variants)
 
     def test_collect_recent_across_topics_keeps_provenance_not_relevance_label(self) -> None:
         paper = _paper(

@@ -278,6 +278,35 @@ def _tokenize_topic_text(text: str) -> list[str]:
     return re.findall(r"[a-z0-9]+(?:-[a-z0-9]+)?", (text or "").lower())
 
 
+def _normalize_match_token(token: str) -> str:
+    """Lightweight token normalization for lexical retrieval.
+
+    This intentionally stays heuristic and dependency-free. It helps align close
+    morphology such as ``articulation`` with ``articulated`` and
+    ``reconstruction`` with ``reconstruct`` without introducing a full stemmer.
+    """
+    t = (token or "").lower().strip()
+    if len(t) < 5:
+        return t
+    for suffix in ("ations", "ation", "ments", "ment", "ingly", "edly", "ingly", "ions", "ion", "ing", "ed"):
+        if t.endswith(suffix) and len(t) - len(suffix) >= 4:
+            return t[: -len(suffix)]
+    return t
+
+
+def _normalize_match_terms(tokens: list[str]) -> list[str]:
+    """Normalize and deduplicate tokens while preserving order."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for token in tokens:
+        norm = _normalize_match_token(token)
+        if not norm or norm in seen:
+            continue
+        seen.add(norm)
+        out.append(norm)
+    return out
+
+
 def _normalize_match_text(text: str) -> str:
     tokens = _tokenize_topic_text(text)
     return " ".join(tokens)
@@ -291,6 +320,22 @@ def _topic_informative_terms(topic: str) -> list[str]:
     terms = _topic_terms(topic)
     informative = [term for term in terms if term not in _GENERIC_TOPIC_TERMS]
     return informative or terms
+
+
+def _expand_atomic_query_term(term: str) -> list[str]:
+    """Generate a very small set of close lexical variants for one-word queries.
+
+    This is intentionally narrow. It is used for query expansion only when a
+    slash/and/or split yields atomic subqueries such as ``articulation``.
+    """
+    tokens = _tokenize_topic_text(term)
+    if len(tokens) != 1:
+        return []
+    token = tokens[0]
+    out: list[str] = []
+    if token.endswith("ion") and len(token) >= 7:
+        out.append(token[:-3] + "ed")
+    return out
 
 
 def _normalize_topic_query(topic: str) -> str:
@@ -365,6 +410,8 @@ def expand_topic_queries(topic: str, *, max_queries: int = 6) -> list[str]:
         for part in parts:
             if _looks_atomic(part):
                 add(part)
+                for variant in _expand_atomic_query_term(part):
+                    add(variant)
         if len(parts) == 2:
             left, right = parts
             add(_combine_shared_prefix(left, right) or "")
@@ -513,16 +560,16 @@ def _score_topic_relevance(topic: str, candidate: CandidatePaper) -> tuple[float
     still used later, but only as tie-breakers after relevance.
     """
     normalized_topic = _normalize_topic_query(topic)
-    terms = _topic_terms(normalized_topic)
+    terms = _normalize_match_terms(_topic_terms(normalized_topic))
     if not terms:
         return 0.0, []
 
-    informative_terms = _topic_informative_terms(normalized_topic)
+    informative_terms = _normalize_match_terms(_topic_informative_terms(normalized_topic))
     phrase = _normalize_match_text(normalized_topic)
     title_text = _normalize_match_text(candidate.title)
     abstract_text = _normalize_match_text(candidate.abstract)
-    title_terms = set(_tokenize_topic_text(candidate.title))
-    abstract_terms = set(_tokenize_topic_text(candidate.abstract))
+    title_terms = set(_normalize_match_terms(_tokenize_topic_text(candidate.title)))
+    abstract_terms = set(_normalize_match_terms(_tokenize_topic_text(candidate.abstract)))
     combined_terms = title_terms | abstract_terms
 
     score = 0.0
@@ -577,17 +624,17 @@ def _passes_topic_relevance_gate(topic: str, candidate: CandidatePaper) -> bool:
     covers all topic terms somewhere, or has an informative title hit. The goal is
     to remove papers that only match a generic term like ``dataset``.
     """
-    terms = _topic_terms(topic)
+    terms = _normalize_match_terms(_topic_terms(topic))
     if len(terms) < 2:
         return True
 
     phrase = _normalize_match_text(topic)
     title_text = _normalize_match_text(candidate.title)
     abstract_text = _normalize_match_text(candidate.abstract)
-    title_terms = set(_tokenize_topic_text(candidate.title))
-    abstract_terms = set(_tokenize_topic_text(candidate.abstract))
+    title_terms = set(_normalize_match_terms(_tokenize_topic_text(candidate.title)))
+    abstract_terms = set(_normalize_match_terms(_tokenize_topic_text(candidate.abstract)))
     combined_terms = title_terms | abstract_terms
-    informative_terms = set(_topic_informative_terms(topic))
+    informative_terms = set(_normalize_match_terms(_topic_informative_terms(topic)))
     informative_title_hits = informative_terms.intersection(title_terms)
 
     if phrase and (phrase in title_text or phrase in abstract_text):

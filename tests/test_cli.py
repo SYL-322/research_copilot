@@ -95,6 +95,12 @@ class TestCliParser(unittest.TestCase):
         self.assertEqual(args.days, 7)
         self.assertEqual(args.topics, ["topic", "a"])
 
+    def test_digest_debug_candidates_parse(self) -> None:
+        p = cli_mod.build_parser()
+        args = p.parse_args(["digest", "--days", "7", "--debug-candidates", "topic"])
+        self.assertEqual(args.command, "digest")
+        self.assertTrue(args.debug_candidates)
+
     def test_topic_parse(self) -> None:
         p = cli_mod.build_parser()
         args = p.parse_args(
@@ -378,6 +384,28 @@ class TestCliCommands(unittest.TestCase):
             rc = cli_mod.cmd_ask_log_delete(args)
         self.assertEqual(rc, 2)
         self.assertIn("use only one of --index or --question", err.getvalue())
+
+    def test_cmd_digest_debug_candidates_prints_debug_path(self) -> None:
+        args = cli_mod.build_parser().parse_args(
+            ["digest", "--days", "7", "--debug-candidates", "topic"]
+        )
+        out = io.StringIO()
+        err = io.StringIO()
+        digest = SimpleNamespace(
+            digest_md_path=str(ROOT / "data" / "digests" / "digest_20260401_test.md"),
+            digest_json_path=str(ROOT / "data" / "digests" / "digest_20260401_test.json"),
+            items=[1, 2],
+        )
+        with (
+            patch("digest.digest_builder.build_daily_digest", return_value=digest),
+            patch("utils.paths.project_root", return_value=ROOT),
+            redirect_stdout(out),
+            contextlib.redirect_stderr(err),
+        ):
+            rc = cli_mod.cmd_digest(args)
+        self.assertEqual(rc, 0)
+        self.assertIn("digest_20260401_test_debug.json", err.getvalue())
+        self.assertIn("items: 2", out.getvalue())
 
 
 if __name__ == "__main__":

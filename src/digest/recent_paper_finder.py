@@ -77,8 +77,9 @@ def _search_digest_topic_variants(
     """
     query_variants = expand_topic_queries(topic) or [topic]
     timeout = settings.http_timeout
-    provider_cap = max(1, fetch_cap // 2)
-    per_query_limit = min(25, max(5, math.ceil(provider_cap / max(1, len(query_variants)))))
+    # Use the full fetch budget across variants for each provider. This keeps
+    # multi-variant digest queries from truncating plausible hits too early.
+    per_query_limit = min(25, max(8, math.ceil(fetch_cap / max(1, len(query_variants)))))
 
     out: list[CandidatePaper] = []
     for query in query_variants:
@@ -155,6 +156,18 @@ class TopicPaperBatch:
     matched_topics: list[str] = field(default_factory=list)
 
 
+@dataclass
+class TopicRecentDebug:
+    """Debug snapshot of one digest topic before and after candidate filtering."""
+
+    topic: str
+    query_variants: list[str] = field(default_factory=list)
+    merged_candidates: list[CandidatePaper] = field(default_factory=list)
+    relevance_candidates: list[CandidatePaper] = field(default_factory=list)
+    recent_candidates: list[CandidatePaper] = field(default_factory=list)
+    final_candidates: list[CandidatePaper] = field(default_factory=list)
+
+
 def collect_recent_across_topics(
     topics: Iterable[str],
     *,
@@ -189,3 +202,56 @@ def collect_recent_across_topics(
     out.sort(key=lambda b: _sort_key_newest(b.paper), reverse=True)
     logger.info("Cross-topic merge: %d unique papers", len(out))
     return out
+
+
+def collect_recent_across_topics_with_debug(
+    topics: Iterable[str],
+    *,
+    days_back: int,
+    max_per_topic: int,
+    settings: Settings,
+    fetch_cap: int = 80,
+) -> tuple[list[TopicPaperBatch], list[TopicRecentDebug]]:
+    """Return digest batches plus per-topic candidate snapshots for debugging."""
+    buckets: dict[tuple[str, str | None], TopicPaperBatch] = {}
+    debug_rows: list[TopicRecentDebug] = []
+
+    for topic in topics:
+        t = topic.strip()
+        if not t:
+            continue
+        cutoff = _utc_today() - timedelta(days=max(0, days_back))
+        merged = _search_digest_topic_variants(
+            t,
+            fetch_cap=fetch_cap,
+            settings=settings,
+        )
+        ranked = rank_and_filter_topic_candidates(
+            t,
+            merged,
+            fallback_to_unfiltered=False,
+        )
+        recent = [p for p in ranked if _is_within_window(p, cutoff)]
+        recent.sort(key=_sort_key_recent_relevant, reverse=True)
+        final = recent[:max_per_topic]
+        debug_rows.append(
+            TopicRecentDebug(
+                topic=t,
+                query_variants=expand_topic_queries(t) or [t],
+                merged_candidates=list(merged),
+                relevance_candidates=list(ranked),
+                recent_candidates=list(recent),
+                final_candidates=list(final),
+            )
+        )
+        for p in final:
+            k = _paper_dedupe_key(p)
+            if k not in buckets:
+                buckets[k] = TopicPaperBatch(paper=p, matched_topics=[t])
+            elif t not in buckets[k].matched_topics:
+                buckets[k].matched_topics.append(t)
+
+    out = list(buckets.values())
+    out.sort(key=lambda b: _sort_key_newest(b.paper), reverse=True)
+    logger.info("Cross-topic merge: %d unique papers", len(out))
+    return out, debug_rows
